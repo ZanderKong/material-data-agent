@@ -26,6 +26,7 @@ class DataType(str, Enum):
     DERIVED_TABLE = "derived_table"
     GENERATED_FIGURE = "generated_figure"
     STRUCTURED_OBSERVATION = "structured_observation"
+    MODEL_RESULT = "model_result"
 
 
 class ProcessingStatus(str, Enum):

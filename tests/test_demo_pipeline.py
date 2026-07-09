@@ -1,29 +1,28 @@
 """End-to-end integration test using the demo data."""
 import shutil
 import json
+import sqlite3
 import tempfile
 from pathlib import Path
 
 import pytest
 
 from data_agent.ingest import ingest_inbox
-from data_agent.process import process_all_tasks
+from data_agent.process import process_all_tasks, process_single_task
 from data_agent.reviews import write_review
 from data_agent.db import init_db, get_conn
 from data_agent.config import get_tasks_dir
 from data_agent.package import load_manifest
 
-DEMO_INBOX = Path("/Users/zanderkong/Desktop/数据处理agent/material_data_agent_demo 测试数据/inbox")
-
 
 @pytest.fixture(scope="module")
-def workspace():
-    if not DEMO_INBOX.exists():
-        pytest.skip(f"Demo inbox not found at {DEMO_INBOX}")
+def workspace(demo_inbox):
+    if not demo_inbox:
+        pytest.skip("Demo inbox not available")
     tmp = tempfile.mkdtemp()
     ws = Path(tmp)
     conn = init_db(ws)
-    ingest_inbox(DEMO_INBOX, ws, conn)
+    ingest_inbox(demo_inbox, ws, conn)
     conn.close()
     process_all_tasks(ws, "local")
     yield ws
@@ -229,7 +228,6 @@ def test_manifest_derived_files_exist(workspace):
 
 
 def test_run_output_ids_in_data_objects(workspace):
-    import sqlite3
     db_path = workspace / "agent.sqlite"
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
@@ -243,7 +241,6 @@ def test_run_output_ids_in_data_objects(workspace):
 
 
 def test_l2_has_derived_from(workspace):
-    import sqlite3
     db_path = workspace / "agent.sqlite"
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
@@ -258,7 +255,6 @@ def test_l2_has_derived_from(workspace):
 
 
 def test_relationships_json_vs_db(workspace):
-    import sqlite3
     db_path = workspace / "agent.sqlite"
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
@@ -275,17 +271,13 @@ def test_relationships_json_vs_db(workspace):
     conn.close()
 
 
-def test_rerun_produces_replace_relationships():
-    import tempfile, shutil, sqlite3
-    from data_agent.ingest import ingest_inbox
-    from data_agent.process import process_single_task
-    from data_agent.db import init_db
-    from data_agent.config import get_tasks_dir
-
+def test_rerun_produces_replace_relationships(demo_inbox):
+    if not demo_inbox:
+        pytest.skip("Demo inbox not available")
     tmp = tempfile.mkdtemp()
     ws = Path(tmp)
     conn = init_db(ws)
-    ingest_inbox(DEMO_INBOX, ws, conn)
+    ingest_inbox(demo_inbox, ws, conn)
     conn.close()
 
     process_single_task(ws, "task_0007", "local")

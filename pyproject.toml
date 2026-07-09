@@ -21,6 +21,8 @@ dependencies = [
     "typer>=0.9",
     "rich>=13.0",
     "marimo>=0.8",
+    "PyYAML>=6.0",
+    "requests>=2.31",
 ]
 
 [project.optional-dependencies]

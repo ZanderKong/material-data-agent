@@ -2,8 +2,10 @@
 __pycache__/
 .pytest_cache/
 workspace/
-work/check-ws/
+work/
 *.sqlite
 *.pyc
 .DS_Store
 data_agent.egg-info/
+.env
+model_profiles.yaml

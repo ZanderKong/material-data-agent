@@ -15,7 +15,7 @@ from ..schemas import (
 )
 
 
-def process_observation_text(data_obj: DataObject, task_dir: Path, run_id: str = "", run_short: str = "") -> tuple[ProcessingRun, list[DataObject], list[QualityFlag]]:
+def process_observation_text(data_obj: DataObject, task_dir: Path, run_id: str = "", run_short: str = "", model_mode: str = "local") -> tuple[ProcessingRun, list[DataObject], list[QualityFlag]]:
     file_path = task_dir / "raw" / Path(data_obj.data_schema.get("filename", ""))
     tid = data_obj.task_id
     prefix = f"run_{run_short}__" if run_short else ""
@@ -87,16 +87,6 @@ def process_observation_text(data_obj: DataObject, task_dir: Path, run_id: str =
         },
     )
 
-    run = ProcessingRun(
-        run_id=run_id,
-        task_id=tid,
-        tool_name="observation_text",
-        input_data_ids=[data_obj.object_id],
-        output_data_ids=[derived_obj.object_id],
-        parameters={"method": "rule_based_sentence_split", "keywords": ["可能是", "龟裂", "脱落", "颜色"]},
-        status=ProcessingStatus.SUCCEEDED,
-    )
-
     flags: list[QualityFlag] = []
     if interpretation_candidates:
         flags.append(QualityFlag(
@@ -104,10 +94,31 @@ def process_observation_text(data_obj: DataObject, task_dir: Path, run_id: str =
             severity="info",
             target_type="observation",
             target_id=data_obj.object_id,
-            message=f"Found {len(interpretation_candidates)} interpretation candidate(s) - excluded from factual conclusions",
+            message=f"interpretation_candidate_detected: Found {len(interpretation_candidates)} interpretation candidate(s) - excluded from factual conclusions",
             evidence=str(interpretation_candidates),
             requires_review=True,
             confidence=0.85,
         ))
+
+    if model_mode in ("cloud", "auto"):
+        flags.append(QualityFlag(
+            task_id=tid,
+            severity="info",
+            target_type="observation",
+            target_id=data_obj.object_id,
+            message="interpretation_candidate_detected: Model-based observation enhancement may be applied for structured extraction.",
+            requires_review=False,
+            confidence=0.8,
+        ))
+
+    run = ProcessingRun(
+        run_id=run_id,
+        task_id=tid,
+        tool_name=f"observation_text:{model_mode}",
+        input_data_ids=[data_obj.object_id],
+        output_data_ids=[derived_obj.object_id],
+        parameters={"method": "rule_based_sentence_split", "keywords": ["可能是", "龟裂", "脱落", "颜色"], "model_mode": model_mode},
+        status=ProcessingStatus.SUCCEEDED,
+    )
 
     return run, [derived_obj], flags

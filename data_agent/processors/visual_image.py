@@ -16,7 +16,7 @@ from ..schemas import (
 )
 
 
-def process_visual_image(data_obj: DataObject, task_dir: Path, run_id: str = "", run_short: str = "") -> tuple[ProcessingRun, list[DataObject], list[QualityFlag]]:
+def process_visual_image(data_obj: DataObject, task_dir: Path, run_id: str = "", run_short: str = "", model_mode: str = "local") -> tuple[ProcessingRun, list[DataObject], list[QualityFlag]]:
     file_path = task_dir / "raw" / Path(data_obj.data_schema.get("filename", ""))
     tid = data_obj.task_id
     prefix = f"run_{run_short}__" if run_short else ""
@@ -49,10 +49,10 @@ def process_visual_image(data_obj: DataObject, task_dir: Path, run_id: str = "",
     run = ProcessingRun(
         run_id=run_id,
         task_id=tid,
-        tool_name="visual_image:local",
+        tool_name=f"visual_image:{model_mode}",
         input_data_ids=[data_obj.object_id],
         output_data_ids=[derived_obj.object_id],
-        parameters={"method": "metadata_extraction"},
+        parameters={"method": "metadata_extraction", "model_mode": model_mode},
         status=ProcessingStatus.SUCCEEDED,
         warnings=["Visual surface analysis requires manual review. No automated scale bar or particle analysis performed."],
     )
@@ -63,7 +63,7 @@ def process_visual_image(data_obj: DataObject, task_dir: Path, run_id: str = "",
             severity="warning",
             target_type="visual_image",
             target_id=data_obj.object_id,
-            message="Manual review required: surface photo analysis cannot be fully automated. No particle size analysis performed.",
+            message="image_observation_requires_review: Surface photo analysis cannot be fully automated. No particle size analysis performed. Manual review required.",
             requires_review=True,
             confidence=0.5,
         )

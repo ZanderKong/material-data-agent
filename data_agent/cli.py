@@ -14,6 +14,7 @@ from .ingest import ingest_inbox
 from .process import process_all_tasks, process_single_task
 from .reviews import write_review
 from .package import load_manifest, get_processing_runs, get_quality_flags, get_review_records
+from .model_adapters.profiles import load_profiles, list_profile_status, is_profile_available
 
 app = typer.Typer(help="Material R&D Data Processing Agent MVP")
 console = Console()
@@ -156,6 +157,66 @@ def info(
                         str(len(manifest.flag_ids or [])),
                         str(len(manifest.review_ids or [])),
                     )
+
+    console.print(table)
+
+
+models_app = typer.Typer(help="Check and configure model profiles")
+app.add_typer(models_app, name="models")
+
+
+@models_app.command("check")
+def models_check(
+    workspace: str = typer.Option("./workspace", help="Path to the workspace directory"),
+    verbose: bool = typer.Option(False, "--verbose", help="Show detailed profile information"),
+):
+    ws = resolve_workspace(workspace)
+    console.print(f"Workspace: {ws}")
+
+    profiles = load_profiles()
+    if not profiles:
+        console.print("[yellow]No model_profiles.yaml found. Local workflow will use stubs only.[/yellow]")
+        return
+
+    table = Table(title="Model Profiles")
+    if verbose:
+        table.add_column("Name")
+        table.add_column("Role")
+        table.add_column("Provider")
+        table.add_column("Base URL")
+        table.add_column("API Key")
+        table.add_column("Model")
+        table.add_column("Available")
+    else:
+        table.add_column("Name")
+        table.add_column("Role")
+        table.add_column("Provider")
+        table.add_column("Status")
+        table.add_column("Available")
+
+    for name, profile in profiles.items():
+        status = list_profile_status(profile, show_values=False)
+        available = "yes" if is_profile_available(profile) else "no"
+        if verbose:
+            table.add_row(
+                name,
+                status.get("role", ""),
+                status.get("provider", ""),
+                status.get("base_url", ""),
+                status.get("api_key", ""),
+                status.get("model", ""),
+                available,
+            )
+        else:
+            configured = sum(1 for v in ("base_url", "api_key", "model") if status.get(v) == "configured")
+            total = 3
+            table.add_row(
+                name,
+                status.get("role", ""),
+                status.get("provider", ""),
+                f"{configured}/{total} configured",
+                available,
+            )
 
     console.print(table)
 

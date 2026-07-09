@@ -14,9 +14,6 @@ from ..schemas import (
     ProcessingStatus,
     QualityFlag,
 )
-from ..model_adapters.base import ModelResult
-from ..model_adapters.local import LocalAnalyzer
-from ..model_adapters.cloud_stub import CloudStubAnalyzer
 
 
 def process_chart_image(data_obj: DataObject, task_dir: Path, run_id: str = "", run_short: str = "", model_mode: str = "local") -> tuple[ProcessingRun, list[DataObject], list[QualityFlag]]:
@@ -47,45 +44,28 @@ def process_chart_image(data_obj: DataObject, task_dir: Path, run_id: str = "", 
         severity="warning",
         target_type="chart_image",
         target_id=data_obj.object_id,
-        message=f"Chart image axis metadata inferred from filename rules. Confidence: {axis_info['confidence']}. Manual confirmation recommended.",
+        message=f"axis_confirmation_required: Chart image axis metadata inferred from filename rules. Confidence: {axis_info['confidence']}. Manual confirmation recommended.",
         evidence=str(axis_info),
         requires_review=True,
         confidence=axis_info["confidence"],
     ))
 
-    model_result = _run_model_adapter(str(file_path), model_mode)
-    annotations = model_result.data
-
-    if model_mode == "cloud":
+    if model_mode in ("cloud", "auto"):
         flags.append(QualityFlag(
             task_id=tid,
-            severity="warning",
-            target_type="model_adapter",
+            severity="info",
+            target_type="chart_image",
             target_id=data_obj.object_id,
-            message="model_unavailable: Cloud model not configured. Using stub.",
-            evidence="CloudStubAnalyzer returned success=False",
+            message="image_observation_requires_review: Chart image analysis may use model-based OCR/vision where available.",
             requires_review=False,
-            confidence=0.0,
+            confidence=0.7,
         ))
-
-    if model_mode == "auto":
-        if annotations.get("fallback_from") == "cloud":
-            flags.append(QualityFlag(
-                task_id=tid,
-                severity="info",
-                target_type="model_adapter",
-                target_id=data_obj.object_id,
-                message="Auto mode: cloud unavailable, fallback to local.",
-                evidence="Cloud adapter failed, using LocalAnalyzer",
-                requires_review=False,
-                confidence=0.6,
-            ))
 
     chart_meta = {
         **metadata,
         "axis_info": axis_info,
         "subtype": subtype,
-        "model_method": annotations.get("method", "none"),
+        "model_mode": model_mode,
         "note": "image-derived data has lower confidence than raw CSV spectral data",
     }
 
@@ -113,10 +93,7 @@ def process_chart_image(data_obj: DataObject, task_dir: Path, run_id: str = "", 
         data_schema={"output_file": output_name, "chart_metadata": chart_meta},
     )
 
-    warnings = ["Chart image confidence is limited. Consider using raw CSV spectral data."]
-
-    if model_mode == "auto" and annotations.get("fallback_from") == "cloud":
-        warnings.append("Auto mode: cloud unavailable, fallback to local rules.")
+    warnings: list[str] = ["Chart image confidence is limited. Consider using raw CSV spectral data."]
 
     run = ProcessingRun(
         run_id=run_id,
@@ -124,27 +101,9 @@ def process_chart_image(data_obj: DataObject, task_dir: Path, run_id: str = "", 
         tool_name=f"chart_image:{model_mode}",
         input_data_ids=[data_obj.object_id],
         output_data_ids=[derived_obj.object_id],
-        parameters={"method": annotations.get("method", "rule_based"), "model_mode": model_mode},
+        parameters={"method": "rule_based", "model_mode": model_mode},
         status=ProcessingStatus.SUCCEEDED,
         warnings=warnings,
     )
 
     return run, [derived_obj], flags
-
-
-def _run_model_adapter(image_path: str, model_mode: str) -> ModelResult:
-    if model_mode == "cloud":
-        analyzer = CloudStubAnalyzer()
-        return analyzer.analyze(image_path)
-    elif model_mode == "auto":
-        cloud = CloudStubAnalyzer()
-        result = cloud.analyze(image_path)
-        if not result.success:
-            local = LocalAnalyzer()
-            local_result = local.analyze(image_path)
-            local_result.data["fallback_from"] = "cloud"
-            return local_result
-        return result
-    else:
-        analyzer = LocalAnalyzer()
-        return analyzer.analyze(image_path)
