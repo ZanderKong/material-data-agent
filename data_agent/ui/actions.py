@@ -1,0 +1,98 @@
+"""Action wrappers that call existing CLI backend functions with try/except."""
+from __future__ import annotations
+
+import shutil
+import tempfile
+from pathlib import Path
+from typing import Any
+
+from ..db import init_db, get_conn
+from ..ingest import ingest_inbox
+from ..process import process_all_tasks, process_single_task
+from ..reviews import write_review as _write_review
+
+
+def do_ingest(inbox_path: str, ws: Path) -> dict[str, Any]:
+    inbox = Path(inbox_path).resolve()
+    if not inbox.exists():
+        return {"success": False, "task_count": 0, "message": f"Inbox not found: {inbox}", "task_ids": []}
+
+    conn = init_db(ws)
+    try:
+        task_ids = ingest_inbox(inbox, ws, conn)
+        conn.close()
+        return {
+            "success": True,
+            "task_count": len(task_ids),
+            "message": f"Created {len(task_ids)} task(s)",
+            "task_ids": task_ids,
+        }
+    except Exception as e:
+        return {"success": False, "task_count": 0, "message": str(e), "task_ids": []}
+
+
+def do_upload_ingest(uploaded_files: list[Any], ws: Path) -> dict[str, Any]:
+    if not uploaded_files:
+        return {"success": False, "task_count": 0, "message": "No files uploaded", "task_ids": []}
+
+    import time
+    ts = str(int(time.time() * 1000))
+    tmp_inbox = ws / "_ui_uploads" / ts
+    tmp_inbox.mkdir(parents=True, exist_ok=True)
+
+    saved = []
+    for uf in uploaded_files:
+        dest = tmp_inbox / uf.name
+        with open(dest, "wb") as f:
+            f.write(uf.getbuffer())
+        saved.append({"name": uf.name, "size": uf.size})
+
+    conn = init_db(ws)
+    try:
+        task_ids = ingest_inbox(tmp_inbox, ws, conn)
+        conn.close()
+        shutil.rmtree(tmp_inbox, ignore_errors=True)
+        return {
+            "success": True,
+            "task_count": len(task_ids),
+            "message": f"Uploaded and created {len(task_ids)} task(s)",
+            "task_ids": task_ids,
+            "uploaded": saved,
+        }
+    except Exception as e:
+        shutil.rmtree(tmp_inbox, ignore_errors=True)
+        return {"success": False, "task_count": 0, "message": str(e), "task_ids": []}
+
+
+def do_process_all(ws: Path, model_mode: str = "local") -> dict[str, Any]:
+    try:
+        count = process_all_tasks(ws, model_mode)
+        return {"success": True, "count": count, "message": f"Processed {count} task(s)"}
+    except Exception as e:
+        return {"success": False, "count": 0, "message": str(e)}
+
+
+def do_process_task(ws: Path, task_id: str, model_mode: str = "local") -> dict[str, Any]:
+    try:
+        ok = process_single_task(ws, task_id, model_mode)
+        if ok:
+            return {"success": True, "message": f"Task {task_id} processed successfully"}
+        return {"success": False, "message": f"Task {task_id} processing returned False"}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
+def do_review(
+    ws: Path,
+    task_id: str,
+    action: str,
+    reviewer: str = "",
+    comment: str = "",
+) -> dict[str, Any]:
+    if not reviewer.strip():
+        return {"success": False, "message": "Reviewer name is required"}
+    try:
+        _write_review(ws, task_id, action, reviewer, comment)
+        return {"success": True, "message": f"Review '{action}' recorded by {reviewer}"}
+    except Exception as e:
+        return {"success": False, "message": str(e)}

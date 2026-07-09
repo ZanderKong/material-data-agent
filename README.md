@@ -106,10 +106,43 @@ union all select "reviews", count(*) from reviews;
 '
 ```
 
+## Local UI
+
+项目提供 Streamlit 本地 Web UI，可替代 CLI 进行日常操作。
+
+### 安装依赖
+
+```bash
+.venv/bin/python -m pip install -e '.[dev]'
+```
+
+### 启动 UI
+
+```bash
+.venv/bin/python -m streamlit run data_agent/ui/app.py
+```
+
+### UI 功能
+
+- **workspace 输入**：选择或输入本地路径
+- **ingest / upload**：从 inbox 目录或直接上传文件
+- **task 列表**：按 display_status 筛选和排序
+- **task detail**：查看 raw/derived/runs/flags/reviews，执行 process/review
+- **model profiles**：查看配置状态（不泄露 API key）
+- **marimo command**：查看 marimo 复核工作台启动命令
+
+### UI 模式
+
+UI 中可选择 `local` / `auto` / `cloud` 模式，行为与 CLI 一致：
+- `local`：零网络调用
+- `auto`：优先云端、自动降级
+- `cloud`：仅云端
+
 ## 项目结构
 
 ```
-data_agent/          # 核心处理逻辑
+data_agent/
+  ui/                # Streamlit 前端
   schemas.py         # Pydantic 数据模型
   db.py              # SQLite 注册系统
   package.py         # Evidence package 读写

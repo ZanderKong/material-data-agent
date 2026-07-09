@@ -23,6 +23,7 @@ dependencies = [
     "marimo>=0.8",
     "PyYAML>=6.0",
     "requests>=2.31",
+    "streamlit>=1.28",
 ]
 
 [project.optional-dependencies]
