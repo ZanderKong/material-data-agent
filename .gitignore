@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+.pytest_cache/
+workspace/
+work/check-ws/
+*.sqlite
+*.pyc
+.DS_Store
+data_agent.egg-info/
