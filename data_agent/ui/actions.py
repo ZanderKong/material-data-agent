@@ -9,6 +9,7 @@ from data_agent.db import init_db
 from data_agent.ingest import ingest_inbox
 from data_agent.process import process_all_tasks, process_single_task
 from data_agent.reviews import write_review as _write_review
+from data_agent.validation import validate_task
 from data_agent.ui.security import safe_ui_error
 
 
@@ -107,3 +108,11 @@ def do_review(
         return {"success": True, "message": f"Review '{action}' recorded by {reviewer}"}
     except Exception as e:
         return {"success": False, "message": _safe_msg(e)}
+
+
+def do_validate_package(ws: Path, task_id: str) -> dict[str, Any]:
+    try:
+        result = validate_task(ws, task_id, write_report=True)
+        return result.model_dump()
+    except Exception as e:
+        return {"task_id": task_id, "status": "error", "errors": [_safe_msg(e)], "warnings": [], "checks": [], "report_path": "", "result_path": "", "validated_at": ""}

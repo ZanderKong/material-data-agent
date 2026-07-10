@@ -18,6 +18,7 @@ from .process import process_all_tasks, process_single_task
 from .reviews import write_review
 from .package import load_manifest, get_processing_runs, get_quality_flags, get_review_records
 from .model_adapters.profiles import load_profiles, list_profile_status, is_profile_available
+from .validation import validate_task, validate_all as validate_all_tasks
 
 app = typer.Typer(help="Material R&D Data Processing Agent MVP")
 console = Console()
@@ -150,6 +151,50 @@ def open(
         subprocess.run(cmd, env=env)
     else:
         console.print("\n[green]--print-command mode: not starting server.[/green]")
+
+
+@app.command()
+def validate(
+    workspace: str = typer.Option("./workspace", help="Path to the workspace directory"),
+    task: Optional[str] = typer.Option(None, help="Validate a specific task ID"),
+    all: bool = typer.Option(False, "--all", help="Validate all tasks"),
+):
+    ws = resolve_workspace(workspace)
+    if task:
+        result = validate_task(ws, task)
+        _print_validation_result(result)
+        if result.status == "error":
+            raise typer.Exit(1)
+    elif all:
+        results = validate_all_tasks(ws)
+        table = Table(title="Validation Results")
+        table.add_column("Task")
+        table.add_column("Status")
+        table.add_column("Errors")
+        table.add_column("Warnings")
+        for r in results:
+            table.add_row(r.task_id, r.status.upper(), str(len(r.errors)), str(len(r.warnings)))
+        console.print(table)
+        if any(r.status == "error" for r in results):
+            raise typer.Exit(1)
+    else:
+        console.print("[red]Specify --task <id> or --all[/red]")
+        raise typer.Exit(1)
+
+
+def _print_validation_result(result) -> None:
+    color = {"pass": "green", "warn": "yellow", "error": "red"}.get(result.status, "white")
+    console.print(f"[{color}]Task {result.task_id}: {result.status.upper()}[/{color}]")
+    if result.errors:
+        console.print("[red]Errors:[/red]")
+        for e in result.errors:
+            console.print(f"  - {e}")
+    if result.warnings:
+        console.print("[yellow]Warnings:[/yellow]")
+        for w in result.warnings:
+            console.print(f"  - {w}")
+    if result.report_path:
+        console.print(f"[dim]Report: {result.report_path}[/dim]")
 
 
 @app.command()

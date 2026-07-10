@@ -166,3 +166,17 @@ def read_task_manifest(task_dir: Path) -> dict[str, Any] | None:
     if manifest is None:
         return None
     return manifest.model_dump()
+
+
+def read_validation_result(task_dir: Path) -> dict[str, Any] | None:
+    path = task_dir / "logs" / "package_validation_result.json"
+    if not path.exists():
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return None
+        return data
+    except (json.JSONDecodeError, FileNotFoundError):
+        return None

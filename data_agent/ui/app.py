@@ -25,7 +25,7 @@ from data_agent.ui.preview import (
     get_file_kind, preview_image, preview_csv, preview_csv_dataframe,
     preview_json, preview_text, preview_model_result, select_raw_response,
 )
-from data_agent.ui.actions import do_ingest, do_upload_ingest, do_process_all, do_process_task, do_review
+from data_agent.ui.actions import do_ingest, do_upload_ingest, do_process_all, do_process_task, do_review, do_validate_package
 from data_agent.ui.security import safe_ui_error, safe_display_text
 
 st.set_page_config(page_title="Material Data Agent", layout="wide")
@@ -479,6 +479,30 @@ with tab_detail:
                         st.rerun()
                     else:
                         st.error(safe_ui_error(result["message"]))
+
+            st.divider()
+
+            st.subheader("Validate Package")
+            if st.button("Validate Package", key="btn_validate"):
+                with st.spinner("Validating..."):
+                    val_result = do_validate_package(ws, tid)
+                status_label = val_result.get("status", "pass").upper()
+                if status_label == "PASS":
+                    st.success(f"Status: {status_label}")
+                elif status_label == "WARN":
+                    st.warning(f"Status: {status_label}")
+                else:
+                    st.error(f"Status: {status_label}")
+                if val_result.get("errors"):
+                    for e in val_result["errors"]:
+                        st.text(safe_display_text(str(e)))
+                if val_result.get("warnings"):
+                    for w in val_result["warnings"]:
+                        st.caption(safe_display_text(str(w)))
+                if val_result.get("report_path"):
+                    st.caption(f"Report: {val_result['report_path']}")
+                if val_result.get("validated_at"):
+                    st.caption(f"Validated: {val_result['validated_at']}")
 
 
 # ==== Tab: Model Profiles ====
