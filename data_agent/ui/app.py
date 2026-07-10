@@ -161,7 +161,7 @@ with tab_overview:
 # ==== Tab: Ingest ====
 with tab_ingest:
     st.subheader("Ingest Files")
-    st.info("推荐输入格式：CSV 文件首行为列标题，列名包含单位（如thickness_um），包含sample_id列。图像保留坐标轴和标尺。详细规范见 Help → Data Input Contract。", icon="")
+    st.info("推荐输入格式：CSV 文件首行为列标题，列名包含单位（如thickness_um），包含sample_id列。图像保留坐标轴和标尺。详细规范见 Help → Data Input Contract。")
 
     method = st.radio("Method", ["Inbox directory", "Upload files"], horizontal=True)
 
