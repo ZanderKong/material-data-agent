@@ -25,7 +25,7 @@ from data_agent.ui.preview import (
     get_file_kind, preview_image, preview_csv, preview_csv_dataframe,
     preview_json, preview_text, preview_model_result, select_raw_response,
 )
-from data_agent.ui.actions import do_ingest, do_upload_ingest, do_process_all, do_process_task, do_review, do_validate_package
+from data_agent.ui.actions import do_ingest, do_upload_ingest, do_process_all, do_process_task, do_review, do_validate_package, do_export_package
 from data_agent.ui.security import safe_ui_error, safe_display_text
 from data_agent.ui.presentation import format_quality_flag, format_model_output, cloud_mode_notice
 
@@ -550,6 +550,23 @@ with tab_detail:
                     st.caption(f"Report: {val_result['report_path']}")
                 if val_result.get("validated_at"):
                     st.caption(f"Validated: {val_result['validated_at']}")
+
+            st.divider()
+            st.subheader("Export Review Package")
+            if st.button("Export Review Package", key="btn_export"):
+                with st.spinner("Exporting..."):
+                    exp = do_export_package(ws, tid)
+                if exp.get("success"):
+                    if exp.get("validation_status") == "error":
+                        st.warning("EXPORTED WITH VALIDATION ERRORS")
+                    st.success(exp.get("message", ""))
+                    if exp.get("zip_path"):
+                        zip_path = Path(exp["zip_path"])
+                        if zip_path.exists():
+                            with open(zip_path, "rb") as zf:
+                                st.download_button("Download ZIP", zf.read(), file_name=zip_path.name, mime="application/zip")
+                else:
+                    st.error(safe_ui_error(exp.get("message", "Export failed")))
 
 
 # ==== Tab: Model Profiles ====

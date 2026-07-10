@@ -10,6 +10,7 @@ from data_agent.ingest import ingest_inbox
 from data_agent.process import process_all_tasks, process_single_task
 from data_agent.reviews import write_review as _write_review
 from data_agent.validation import validate_task
+from data_agent.export import export_task
 from data_agent.ui.security import safe_ui_error
 
 
@@ -116,3 +117,12 @@ def do_validate_package(ws: Path, task_id: str) -> dict[str, Any]:
         return result.model_dump()
     except Exception as e:
         return {"task_id": task_id, "status": "error", "errors": [_safe_msg(e)], "warnings": [], "checks": [], "report_path": "", "result_path": "", "validated_at": ""}
+
+
+def do_export_package(ws: Path, task_id: str, output_path: str | None = None) -> dict[str, Any]:
+    try:
+        out = Path(output_path) if output_path else None
+        result = export_task(ws, task_id, out)
+        return result.model_dump()
+    except Exception as e:
+        return {"success": False, "task_id": task_id, "errors": [_safe_msg(e)], "message": "Export failed", "zip_path": "", "validation_status": "error", "file_count": 0, "warnings": []}

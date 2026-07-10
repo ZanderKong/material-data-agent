@@ -19,6 +19,7 @@ from .reviews import write_review
 from .package import load_manifest, get_processing_runs, get_quality_flags, get_review_records
 from .model_adapters.profiles import load_profiles, list_profile_status, is_profile_available
 from .validation import validate_task, validate_all as validate_all_tasks
+from .export import export_task
 
 app = typer.Typer(help="Material R&D Data Processing Agent MVP")
 console = Console()
@@ -151,6 +152,31 @@ def open(
         subprocess.run(cmd, env=env)
     else:
         console.print("\n[green]--print-command mode: not starting server.[/green]")
+
+
+@app.command()
+def export(
+    workspace: str = typer.Option("./workspace", help="Path to the workspace directory"),
+    task: str = typer.Option(..., help="Task ID to export"),
+    output: Optional[str] = typer.Option(None, help="Optional output ZIP path"),
+):
+    ws = resolve_workspace(workspace)
+    out_path = Path(output) if output else None
+    result = export_task(ws, task, out_path)
+    if result.success:
+        color = {"pass": "green", "warn": "yellow", "error": "red"}.get(result.validation_status, "white")
+        console.print(f"[{color}]Validation: {result.validation_status.upper()}[/{color}]")
+        console.print(f"ZIP: {result.zip_path}")
+        console.print(f"Files: {result.file_count}")
+        for w in result.warnings:
+            console.print(f"[yellow]WARNING: {w}[/yellow]")
+        if result.validation_status == "error":
+            console.print("[red]EXPORTED WITH VALIDATION ERRORS[/red]")
+    else:
+        console.print(f"[red]{result.message}[/red]")
+        for e in result.errors:
+            console.print(f"  - {e}")
+        raise typer.Exit(1)
 
 
 @app.command()
