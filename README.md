@@ -18,10 +18,13 @@ python3.10 -m venv .venv
 - **基础 demo 闭环**：ingest → process → review → info
 - **Model Service Layer 已实现**：可配置模型角色、路由、fallback
 - **Streamlit Local UI 已实现**：6-tab 前端，支持 ingest/upload/process/review/查看
-- **pytest**：180 passed（2026-07-10 全量运行结果）
+- **pytest**：234 passed（2026-07-10 全量运行结果）
 - **L2 版本化输出**：已实现（run 前缀）
 - **Rerun replaces/replaced_by**：已实现
 - **Marimo 复核命令**：可生成
+- **Package Validation**：已实现（CLI `validate --task/--all` + UI Validate Package 按钮）
+- **Package Export**：已实现（CLI `export --task` + UI Export Review Package 下载）
+- **Sample Index**：已实现（CLI `index-samples` + UI Sample View tab）
 - **FRONTEND_CHECK.md**：前端验收记录
 - **MODEL_LAYER_CHECK.md**：模型服务层验收记录（历史 checkpoint: 2026-07-09, 112 passed）
 - **docs/ui_walkthrough.md**：UI 操作 walkthrough

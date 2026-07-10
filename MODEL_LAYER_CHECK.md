@@ -11,9 +11,9 @@
 ### 前端收口后全项目测试结果（2026-07-10）
 
 - **日期**：2026-07-10
-- **pytest**：180 passed, 0 skipped, 0 failed
-- **范围**：全项目测试（含模型层 112 + UI 层 38 + 前端收口新增 22）。
-- **说明**：此结果与 2026-07-09 的 112 passed 不矛盾——前者是模型层验收时的 snapshot，本次是前端收口后的全量结果。第二轮修复（P0/P1/P2）新增 tests/test_ui_security.py 中的 safe_display_text 测试和 tests/test_ui_preview.py 中的 preview_csv_dataframe 测试。
+- **pytest**：234 passed, 0 skipped, 0 failed
+- **范围**：全项目测试（含模型层 112 + UI 层 + 本轮迭代全部新增 tests）。
+- **说明**：此结果与 2026-07-09 的 112 passed 不矛盾——前者是模型层验收时的 snapshot，本次是 next-iteration 收口后的全量结果。
 
 ## 审计 SQL 验证
 
