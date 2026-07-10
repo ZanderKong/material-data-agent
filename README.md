@@ -176,6 +176,8 @@ UI 中可选择 `local` / `auto` / `cloud` 模式，行为与 CLI 一致：
 - `FRONTEND_CHECK.md`：前端验收记录
 - `MODEL_LAYER_CHECK.md`：模型服务层验收记录
 - `docs/ui_walkthrough.md`：UI 操作 walkthrough
+- `docs/data_input_contract.md`：数据输入规范
+- `REAL_API_CHECK.md`：真实 API 验证记录（需用户提供 API key）
 
 ## 项目结构
 
