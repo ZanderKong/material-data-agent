@@ -1,9 +1,8 @@
-"""Evidence package export: ZIP generation with validation gate and review README."""
+"""Evidence package export: safe ZIP with validation gate, preflight, and review README."""
 from __future__ import annotations
 
 import json
 import os
-import shutil
 import tempfile
 import zipfile
 from datetime import datetime, timezone
@@ -41,78 +40,146 @@ def export_task(
             message="Export failed: task directory not found",
         )
 
+    # Reject output inside task
+    if output_path is not None:
+        try:
+            out_resolved = output_path.resolve()
+            td_resolved = td.resolve()
+            out_resolved.relative_to(td_resolved)
+            return ExportResult(
+                success=False, task_id=task_id,
+                errors=["Output path must not be inside the task directory"],
+                message="Export failed: output inside task directory",
+            )
+        except (ValueError, OSError):
+            pass  # OK, outside task
+
     if output_path is None:
         exports_dir = workspace / "exports"
         exports_dir.mkdir(parents=True, exist_ok=True)
         output_path = exports_dir / f"{task_id}_export.zip"
+    else:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_path.is_symlink():
+        return ExportResult(
+            success=False, task_id=task_id,
+            errors=["Output path is a symlink"],
+            message="Export failed: output path is a symlink",
+        )
 
     # 1. Validate
     val_result = validate_task(workspace, task_id, write_report=True)
-    result_json = td / "logs" / "package_validation_result.json"
-    report_md = td / "logs" / "package_validation_report.md"
 
-    if not result_json.exists() or not report_md.exists():
+    # Check for report_write_failed
+    for ch in val_result.checks:
+        if ch.name == "report_write_failed":
+            return ExportResult(
+                success=False, task_id=task_id,
+                validation_status=val_result.status,
+                errors=["Validation report generation failed (report_write_failed)"],
+                message="Export failed: validation reports could not be written",
+            )
+
+    result_json_path = td / "logs" / "package_validation_result.json"
+    report_md_path = td / "logs" / "package_validation_report.md"
+
+    if not result_json_path.is_file() or not report_md_path.is_file():
         return ExportResult(
             success=False, task_id=task_id,
             validation_status=val_result.status,
-            errors=["Validation report generation failed"],
-            message="Export failed: validation reports not available",
+            errors=["Validation report artifacts missing after write"],
+            message="Export failed: validation reports not found",
         )
 
-    # 2. Generate readme
+    # 2. Generate README
     try:
         readme = _generate_readme(td, task_id, val_result)
-    except Exception:
-        readme = f"# Review Package: {task_id}\n\nReadme generation failed.\n"
+    except Exception as e:
+        return ExportResult(
+            success=False, task_id=task_id,
+            validation_status=val_result.status,
+            errors=[safe_display_text(f"README generation failed: {e}")],
+            message="Export failed: README generation failed",
+        )
 
-    # 3. Build ZIP
+    # 3. Preflight archive file list
+    td_resolved = td.resolve()
+    output_resolved = output_path.resolve()
+    tmp_path = None
+
+    def _collect_files():
+        items: list[tuple[str, Path]] = []
+        # README and validation report at root
+        items.append(("README_for_review.md", None))
+        items.append(("package_validation_report.md", None))
+
+        for sub in ("manifest.json", "raw", "derived", "logs", "reviews"):
+            src = td / sub
+            if not src.exists():
+                continue
+            if src.is_file():
+                items.append((sub, src))
+            elif src.is_dir():
+                for root, _, files in os.walk(str(src)):
+                    for fn in files:
+                        if fn.startswith("."):
+                            continue
+                        fp_raw = Path(root) / fn
+                        if fp_raw.is_symlink():
+                            return None, f"Symlink in package: {fp_raw}"
+                        fp = fp_raw.resolve()
+                        if not fp.is_file():
+                            return None, f"Non-regular file in package: {fp_raw}"
+                        rel = str(fp_raw.relative_to(td))
+                        if ".." in rel:
+                            return None, f"Path traversal in package: {rel}"
+                        if fp == output_resolved:
+                            continue
+                        items.append((rel, fp))
+        # Ensure directory entries
+        for dirname in ("raw/", "derived/", "logs/", "reviews/"):
+            dirname_stripped = dirname.rstrip("/")
+            if not any(it[0] == dirname_stripped or (it[0].startswith(dirname_stripped + "/")) for it in items):
+                items.append((dirname, None))
+        return items, None
+
+    items, preflight_err = _collect_files()
+    if preflight_err is not None:
+        return ExportResult(
+            success=False, task_id=task_id,
+            validation_status=val_result.status,
+            errors=[preflight_err],
+            message=f"Export failed: {preflight_err}",
+        )
+
+    # 4. Build ZIP
     warnings: list[str] = []
     if val_result.status == "error":
         warnings.append("EXPORTED WITH VALIDATION ERRORS")
 
-    tmp_zip_path = None
     try:
-        fd, tmp_zip_path = tempfile.mkstemp(suffix=".zip", dir=str(output_path.parent))
+        fd, tmp_path = tempfile.mkstemp(suffix=".zip", dir=str(output_path.parent))
         os.close(fd)
 
         file_count = 0
-        with zipfile.ZipFile(tmp_zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            # Write readme at root
-            zf.writestr("README_for_review.md", readme)
-            file_count += 1
-
-            # Copy validation report to root too
-            with open(report_md, "r", encoding="utf-8") as f:
-                zf.writestr("package_validation_report.md", f.read())
-            file_count += 1
-
-            for sub in ("manifest.json", "raw", "derived", "logs", "reviews"):
-                src = td / sub
-                if not src.exists():
-                    continue
-                if src.is_file():
-                    arcname = sub
-                    zf.write(str(src), arcname)
+        with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for arcname, src_path in items:
+                if arcname == "README_for_review.md":
+                    zf.writestr(arcname, readme)
                     file_count += 1
-                elif src.is_dir():
-                    for root, dirs, files in os.walk(str(src)):
-                        for fn in files:
-                            if fn.startswith("."):
-                                continue
-                            fp = Path(root) / fn
-                            rel = fp.relative_to(td)
-                            # Security: reject dangerous paths
-                            if fp.is_symlink() or ".." in str(rel) or fp.resolve() != fp:
-                                warnings.append(f"Skipped unsafe path: {rel}")
-                                continue
-                            zf.write(str(fp), str(rel))
-                            file_count += 1
+                elif arcname == "package_validation_report.md":
+                    with open(report_md_path, "r", encoding="utf-8") as f:
+                        zf.writestr(arcname, f.read())
+                    file_count += 1
+                elif src_path is not None and src_path.is_file():
+                    zf.write(str(src_path), arcname)
+                    file_count += 1
+                elif src_path is None:
+                    # Directory entry
+                    pass
 
-        # Atomic replace
-        final = Path(tmp_zip_path)
-        final.replace(output_path)
+        Path(tmp_path).replace(output_path)
 
         base_msg = f"Exported {task_id} ({file_count} files)"
         if val_result.status == "error":
@@ -123,15 +190,15 @@ def export_task(
         return ExportResult(
             success=True,
             task_id=task_id,
-            zip_path=str(output_path.resolve()),
+            zip_path=str(output_resolved),
             validation_status=val_result.status,
             file_count=file_count,
             warnings=warnings,
             message=status_msg,
         )
     except Exception as e:
-        if tmp_zip_path and Path(tmp_zip_path).exists():
-            Path(tmp_zip_path).unlink(missing_ok=True)
+        if tmp_path and Path(tmp_path).exists():
+            Path(tmp_path).unlink(missing_ok=True)
         return ExportResult(
             success=False, task_id=task_id,
             errors=[safe_display_text(str(e))],
@@ -146,7 +213,7 @@ def _generate_readme(td: Path, task_id: str, val_result: Any) -> str:
     reviews = get_review_records(td)
 
     lines = [
-        f"# Review Package: {task_id}",
+        f"# Review Package: {safe_display_text(task_id)}",
         "",
         f"**Generated**: {datetime.now(timezone.utc).isoformat()}",
         f"**Validation Status**: {val_result.status.upper()}",
@@ -155,7 +222,7 @@ def _generate_readme(td: Path, task_id: str, val_result: Any) -> str:
     ]
     if manifest:
         for f in manifest.input_files:
-            lines.append(f"- {f}")
+            lines.append(f"- {safe_display_text(str(f))}")
     else:
         lines.append("*No manifest*")
 
@@ -163,26 +230,30 @@ def _generate_readme(td: Path, task_id: str, val_result: Any) -> str:
     lines.append("## Derived Files")
     if manifest:
         for f in manifest.derived_files:
-            lines.append(f"- {f}")
+            lines.append(f"- {safe_display_text(str(f))}")
     else:
         lines.append("*No manifest*")
 
     lines.append("")
     lines.append("## Processing Runs")
     for r in runs:
-        lines.append(f"- {r.get('tool_name', '?')} [{r.get('status', '?')}]")
+        tool = safe_display_text(str(r.get("tool_name", "?")))
+        status = safe_display_text(str(r.get("status", "?")))
+        lines.append(f"- {tool} [{status}]")
 
     lines.append("")
     lines.append("## Quality Flags")
     for fq in flags:
         msg = safe_display_text(str(fq.get("message", "")))
         review_tag = " [REQUIRES REVIEW]" if fq.get("requires_review") else ""
-        lines.append(f"- {fq.get('severity', 'info')}: {msg}{review_tag}")
+        lines.append(f"- {safe_display_text(str(fq.get('severity', 'info')))}: {msg}{review_tag}")
 
     lines.append("")
     lines.append("## Reviews")
     for rev in reviews:
-        lines.append(f"- {rev.get('action', '?')} by {rev.get('reviewer', '?')}")
+        action = safe_display_text(str(rev.get("action", "?")))
+        reviewer = safe_display_text(str(rev.get("reviewer", "?")))
+        lines.append(f"- {action} by {reviewer}")
 
     lines.append("")
     lines.append("## Validation")
