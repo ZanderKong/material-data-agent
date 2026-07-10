@@ -5,14 +5,14 @@ import json
 from pathlib import Path
 from typing import Any
 
-from ..package import (
+from data_agent.package import (
     load_manifest,
     get_processing_runs,
     get_quality_flags,
     get_relationships,
     get_review_records,
 )
-from ..model_adapters.profiles import load_profiles, list_profile_status, is_profile_available
+from data_agent.model_adapters.profiles import load_profiles, list_profile_status, is_profile_available
 
 
 def _safe_json(path: Path) -> Any:

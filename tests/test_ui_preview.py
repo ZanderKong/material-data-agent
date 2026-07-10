@@ -8,6 +8,7 @@ import pytest
 from data_agent.ui.preview import (
     get_file_kind,
     preview_csv,
+    preview_csv_dataframe,
     preview_json,
     preview_text,
     preview_model_result,
@@ -86,6 +87,23 @@ class TestPreviewCsv:
 
     def test_missing_file(self):
         assert preview_csv(Path("/nonexistent/file.csv")) is None
+
+
+class TestPreviewCsvDataframe:
+    def test_returns_dataframe(self):
+        lines = [f"col1,col2"] + [f"a{i},b{i}" for i in range(60)]
+        content = "\n".join(lines)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, encoding="utf-8") as f:
+            f.write(content)
+            f.flush()
+            path = Path(f.name)
+            df = preview_csv_dataframe(path, max_rows=50)
+        assert df is not None
+        assert len(df) == 50
+        assert list(df.columns) == ["col1", "col2"]
+
+    def test_missing_file_returns_none(self):
+        assert preview_csv_dataframe(Path("/nonexistent/file.csv")) is None
 
 
 class TestPreviewJson:

@@ -18,7 +18,7 @@ python3.10 -m venv .venv
 - **基础 demo 闭环**：ingest → process → review → info
 - **Model Service Layer 已实现**：可配置模型角色、路由、fallback
 - **Streamlit Local UI 已实现**：6-tab 前端，支持 ingest/upload/process/review/查看
-- **pytest**：174 passed（2026-07-10 全量运行结果）
+- **pytest**：180 passed（2026-07-10 全量运行结果）
 - **L2 版本化输出**：已实现（run 前缀）
 - **Rerun replaces/replaced_by**：已实现
 - **Marimo 复核命令**：可生成

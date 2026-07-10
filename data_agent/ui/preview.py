@@ -53,6 +53,17 @@ def preview_csv(path: Path, max_rows: int = 50) -> str | None:
         return _preview_csv_fallback(path, max_rows)
 
 
+def preview_csv_dataframe(path: Path, max_rows: int = 50):
+    """Return a pandas DataFrame for table display. Returns None if unreadable."""
+    if not path.exists():
+        return None
+    try:
+        import pandas as pd
+        return pd.read_csv(path, nrows=max_rows)
+    except Exception:
+        return None
+
+
 def preview_json(path: Path) -> str | None:
     if not path.exists():
         return None

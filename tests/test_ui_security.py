@@ -1,7 +1,30 @@
 """Tests for UI-layer error redaction."""
 import os
 import pytest
-from data_agent.ui.security import safe_ui_error
+from data_agent.ui.security import safe_ui_error, safe_display_text
+
+
+class TestSafeDisplayText:
+    def test_redacts_sk_token(self):
+        result = safe_display_text("key is sk-abcdef1234567890 in text")
+        assert "sk-abcdef1234567890" not in result
+        assert "REDACTED" in result
+
+    def test_redacts_bearer(self):
+        result = safe_display_text("Auth: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.12345 token")
+        assert "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9" not in result
+        assert "Bearer [REDACTED]" in result
+
+    def test_does_not_redact_env_names(self):
+        result = safe_display_text("set BEST_MODEL_API_KEY in your env")
+        assert "BEST_MODEL_API_KEY" in result
+        assert "ENV_VAR_NAME_REDACTED" not in result
+
+    def test_redacts_env_values(self, monkeypatch):
+        monkeypatch.setenv("BEST_MODEL_API_KEY", "my-secret-api-key-123")
+        result = safe_display_text("Error: my-secret-api-key-123 rejected")
+        assert "my-secret-api-key-123" not in result
+        assert "REDACTED" in result
 
 
 class TestSafeUiError:

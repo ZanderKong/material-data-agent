@@ -7,8 +7,8 @@ from pathlib import Path
 
 import streamlit as st
 
-from ..config import resolve_workspace
-from .readers import (
+from data_agent.config import resolve_workspace
+from data_agent.ui.readers import (
     read_workspace_summary,
     read_task_list,
     read_task_manifest,
@@ -20,10 +20,13 @@ from .readers import (
     read_review_records,
     read_model_profiles,
 )
-from .status import derive_display_status, status_display_name
-from .preview import get_file_kind, preview_image, preview_csv, preview_json, preview_text, preview_model_result
-from .actions import do_ingest, do_upload_ingest, do_process_all, do_process_task, do_review
-from .security import safe_ui_error
+from data_agent.ui.status import derive_display_status, status_display_name
+from data_agent.ui.preview import (
+    get_file_kind, preview_image, preview_csv, preview_csv_dataframe,
+    preview_json, preview_text, preview_model_result,
+)
+from data_agent.ui.actions import do_ingest, do_upload_ingest, do_process_all, do_process_task, do_review
+from data_agent.ui.security import safe_ui_error, safe_display_text
 
 st.set_page_config(page_title="Material Data Agent", layout="wide")
 
@@ -250,8 +253,13 @@ with tab_detail:
                     if kind == "image":
                         st.image(str(rpath), caption=rf["name"], width=400)
                     elif kind == "csv":
-                        content = preview_csv(rpath) or ""
-                        st.text_area("Content", content, height=200, key=f"raw_{rf['name']}")
+                        df = preview_csv_dataframe(rpath)
+                        if df is not None:
+                            st.dataframe(df, use_container_width=True, key=f"raw_{rf['name']}")
+                            st.caption(f"Preview: first {len(df)} rows")
+                        else:
+                            content = preview_csv(rpath) or ""
+                            st.text_area("Content", content, height=200, key=f"raw_{rf['name']}")
                     elif kind == "text":
                         content = preview_text(rpath) or ""
                         st.text_area("Content", content, height=120, key=f"raw_{rf['name']}")
@@ -326,7 +334,7 @@ with tab_detail:
                                 with st.expander("Raw Response (redacted)", expanded=False):
                                     raw_text = raw_data.get("raw_text", "")
                                     raw_redacted = raw_data.get("raw_response_redacted", "")
-                                    display_raw = raw_redacted or raw_text
+                                    display_raw = safe_display_text(raw_redacted or raw_text)
                                     if display_raw:
                                         st.text_area("Raw", str(display_raw)[:2000], height=150, key=f"raw_resp_{df_info['name']}")
                                     else:
@@ -336,8 +344,13 @@ with tab_detail:
                         st.image(str(dpath), caption=label, width=400)
                     elif kind == "csv":
                         st.markdown(f"**{label}**")
-                        content = preview_csv(dpath) or ""
-                        st.text_area("Preview", content, height=200, key=f"derived_{df_info['name']}")
+                        df = preview_csv_dataframe(dpath)
+                        if df is not None:
+                            st.dataframe(df, use_container_width=True, key=f"derived_{df_info['name']}")
+                            st.caption(f"Preview: first {len(df)} rows")
+                        else:
+                            content = preview_csv(dpath) or ""
+                            st.text_area("Preview", content, height=200, key=f"derived_{df_info['name']}")
                     elif kind == "json":
                         st.markdown(f"**{label}**")
                         content = preview_json(dpath) or ""

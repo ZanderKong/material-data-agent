@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..schemas import ReviewAction
+from data_agent.schemas import ReviewAction
 
 
 def derive_display_status(
