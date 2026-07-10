@@ -187,12 +187,18 @@ def validate(
     all: bool = typer.Option(False, "--all", help="Validate all tasks"),
 ):
     ws = resolve_workspace(workspace)
+    if task and all:
+        console.print("[red]Specify only one of --task <id> or --all, not both[/red]")
+        raise typer.Exit(2)
+    if not task and not all:
+        console.print("[red]Specify --task <id> or --all[/red]")
+        raise typer.Exit(2)
     if task:
         result = validate_task(ws, task)
         _print_validation_result(result)
         if result.status == "error":
             raise typer.Exit(1)
-    elif all:
+    else:
         results = validate_all_tasks(ws)
         table = Table(title="Validation Results")
         table.add_column("Task")
@@ -204,9 +210,6 @@ def validate(
         console.print(table)
         if any(r.status == "error" for r in results):
             raise typer.Exit(1)
-    else:
-        console.print("[red]Specify --task <id> or --all[/red]")
-        raise typer.Exit(1)
 
 
 def _print_validation_result(result) -> None:
