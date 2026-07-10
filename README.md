@@ -26,6 +26,10 @@ python3.10 -m venv .venv
 - **MODEL_LAYER_CHECK.md**：模型服务层验收记录（历史 checkpoint: 2026-07-09, 112 passed）
 - **docs/ui_walkthrough.md**：UI 操作 walkthrough
 
+## 数据输入规范
+
+提交数据前请阅读 [Data Input Contract](docs/data_input_contract.md)，了解推荐的 CSV 格式、图像要求和观测文本规范，以提升自动提取准确率。
+
 ## 快速开始
 
 ```bash

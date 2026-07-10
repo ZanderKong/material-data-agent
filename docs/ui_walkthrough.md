@@ -44,6 +44,8 @@
 
 或者使用 "Upload files" 直接上传文件。
 
+> 提交数据前建议阅读 [Data Input Contract](docs/data_input_contract.md)，了解推荐的输入格式。不满足规范的数据仍可被摄取，但会产生 `requires_review` 标记。
+
 ### 4. 查看 task list
 
 - 切换到 "Tasks" tab。

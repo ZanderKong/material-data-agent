@@ -121,6 +121,7 @@ with tab_overview:
 # ==== Tab: Ingest ====
 with tab_ingest:
     st.subheader("Ingest Files")
+    st.info("推荐输入格式：CSV 文件首行为列标题，列名包含单位（如thickness_um），包含sample_id列。图像保留坐标轴和标尺。详细规范见 Help → Data Input Contract。", icon="")
 
     method = st.radio("Method", ["Inbox directory", "Upload files"], horizontal=True)
 
@@ -509,6 +510,21 @@ with tab_profiles:
 # ==== Tab: Help ====
 with tab_help:
     st.subheader("Help & Marimo")
+
+    st.markdown("""
+### Data Input Contract
+
+推荐输入格式参见项目文档 `docs/data_input_contract.md`。
+
+核心要点：
+- CSV 首行为列标题，列名包含单位（如 `thickness_um`, `wavenumber_cm-1`）
+- 数值列为纯数字，缺失值用空白或 `NA`
+- 图像保留坐标轴、图例、单位、标尺
+- 观测文本区分事实和推测
+- 不满足规范的数据会产生 `requires_review` 标记，不会静默失败
+    """)
+
+    st.divider()
 
     st.markdown("""
 ### Quick Reference
