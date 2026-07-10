@@ -19,13 +19,15 @@ from data_agent.ui.readers import (
     read_relationships,
     read_review_records,
     read_model_profiles,
+    read_validation_result,
+    read_sample_index,
 )
 from data_agent.ui.status import derive_display_status, status_display_name
 from data_agent.ui.preview import (
     get_file_kind, preview_image, preview_csv, preview_csv_dataframe,
     preview_json, preview_text, preview_model_result, select_raw_response,
 )
-from data_agent.ui.actions import do_ingest, do_upload_ingest, do_process_all, do_process_task, do_review, do_validate_package, do_export_package
+from data_agent.ui.actions import do_ingest, do_upload_ingest, do_process_all, do_process_task, do_review, do_validate_package, do_export_package, do_index_samples
 from data_agent.ui.security import safe_ui_error, safe_display_text
 from data_agent.ui.presentation import format_quality_flag, format_model_output, cloud_mode_notice
 
@@ -100,8 +102,8 @@ _auto_refresh_task_list(ws)
 
 
 # ---- Tabs ----
-tab_overview, tab_ingest, tab_tasks, tab_detail, tab_profiles, tab_help = st.tabs([
-    "Overview", "Ingest", "Tasks", "Task Detail", "Model Profiles", "Help",
+tab_overview, tab_ingest, tab_tasks, tab_detail, tab_samples, tab_profiles, tab_help = st.tabs([
+    "Overview", "Ingest", "Tasks", "Task Detail", "Sample View", "Model Profiles", "Help",
 ])
 
 # ==== Tab: Overview ====
@@ -401,17 +403,15 @@ with tab_detail:
             # --- Processing Runs ---
             if view_mode == "Advanced":
                 with st.expander("Processing Runs", expanded=False):
-                if not runs:
-                    st.caption("No processing runs")
-                else:
-                    for run in runs:
-                        is_model = str(run.get("tool_name", "")).startswith("model:")
-                        label = f"{run.get('tool_name','?')} [{run.get('status','?')}]"
-                        if is_model:
-                            label = f"{label}"
-                        st.text(label)
-                        with st.expander("Details"):
-                            st.json(run)
+                    if not runs:
+                        st.caption("No processing runs")
+                    else:
+                        for run in runs:
+                            is_model = str(run.get("tool_name", "")).startswith("model:")
+                            lbl = f"{run.get('tool_name','?')} [{run.get('status','?')}]"
+                            st.text(lbl)
+                            with st.expander("Details"):
+                                st.json(run)
 
             # --- Quality Flags ---
             with st.expander("Quality Flags", expanded=False):
@@ -432,15 +432,15 @@ with tab_detail:
             # --- Relationships ---
             if view_mode == "Advanced":
                 with st.expander("Relationships", expanded=False):
-                if not rels:
-                    st.caption("No relationships")
-                else:
-                    st.dataframe([{
-                        "rel_type": r.get("rel_type", ""),
-                        "source_id": r.get("source_id", ""),
-                        "target_id": r.get("target_id", ""),
-                        "run_id": (r.get("metadata", {}) or {}).get("run_id", r.get("run_id", "")),
-                    } for r in rels], use_container_width=True)
+                    if not rels:
+                        st.caption("No relationships")
+                    else:
+                        st.dataframe([{
+                            "rel_type": r.get("rel_type", ""),
+                            "source_id": r.get("source_id", ""),
+                            "target_id": r.get("target_id", ""),
+                            "run_id": (r.get("metadata", {}) or {}).get("run_id", r.get("run_id", "")),
+                        } for r in rels], use_container_width=True)
 
             # --- Review Records ---
             with st.expander("Review Records", expanded=False):
@@ -567,6 +567,47 @@ with tab_detail:
                                 st.download_button("Download ZIP", zf.read(), file_name=zip_path.name, mime="application/zip")
                 else:
                     st.error(safe_ui_error(exp.get("message", "Export failed")))
+
+
+# ==== Tab: Sample View ====
+with tab_samples:
+    st.subheader("Sample Index")
+
+    if st.button("Rebuild Sample Index", key="btn_rebuild_index"):
+        with st.spinner("Building..."):
+            idx = do_index_samples(ws)
+        st.success(f"Indexed {len(idx.get('samples', []))} samples, {len(idx.get('unlinked_tasks', []))} unlinked")
+        st.rerun()
+
+    idx_data = read_sample_index(ws)
+    samples = idx_data.get("samples", [])
+    unlinked = idx_data.get("unlinked_tasks", [])
+
+    if not samples and not unlinked:
+        st.info("No sample index found. Click 'Rebuild Sample Index' to generate one.")
+    else:
+        st.metric("Samples", len(samples))
+        st.metric("Unlinked Tasks", len(unlinked))
+
+        if idx_data.get("warnings"):
+            for w in idx_data["warnings"]:
+                st.warning(w)
+
+        if unlinked:
+            with st.expander(f"Unlinked Tasks ({len(unlinked)})", expanded=False):
+                for u in unlinked:
+                    st.text(f"{u.get('task_id', '?')}: {u.get('reason', '')} (type: {u.get('data_type', '?')})")
+
+        if samples:
+            batch_filter = st.selectbox("Batch filter", ["All"] + sorted(set(s.get("batch_id", "") for s in samples if s.get("batch_id"))))
+            for s in samples:
+                bid = s.get("batch_id", "")
+                if batch_filter != "All" and bid != batch_filter:
+                    continue
+                with st.expander(f"{s['sample_id']}  {('Batch: ' + bid) if bid else ''}", expanded=False):
+                    for rt in s.get("related_tasks", []):
+                        st.caption(f"{rt['task_id']} — {rt['data_type']} (source: {rt['source']}, confidence: {rt['confidence']:.2f})")
+                    st.caption(f"Available data: {', '.join(s.get('available_data', []))}")
 
 
 # ==== Tab: Model Profiles ====

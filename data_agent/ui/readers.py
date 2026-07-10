@@ -13,6 +13,7 @@ from data_agent.package import (
     get_review_records,
 )
 from data_agent.model_adapters.profiles import load_profiles, list_profile_status, is_profile_available
+from data_agent.sample_index import load_sample_index
 
 
 def _safe_json(path: Path) -> Any:
@@ -199,3 +200,10 @@ def read_validation_result(task_dir: Path) -> dict[str, Any] | None:
         return data
     except (json.JSONDecodeError, FileNotFoundError):
         return None
+
+
+def read_sample_index(ws: Path) -> dict[str, Any]:
+    result = load_sample_index(ws)
+    if result is None:
+        return {"samples": [], "unlinked_tasks": [], "warnings": [], "generated_at": ""}
+    return result.model_dump()

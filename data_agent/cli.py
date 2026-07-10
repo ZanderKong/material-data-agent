@@ -20,6 +20,7 @@ from .package import load_manifest, get_processing_runs, get_quality_flags, get_
 from .model_adapters.profiles import load_profiles, list_profile_status, is_profile_available
 from .validation import validate_task, validate_all as validate_all_tasks
 from .export import export_task
+from .sample_index import build_sample_index, load_sample_index
 
 app = typer.Typer(help="Material R&D Data Processing Agent MVP")
 console = Console()
@@ -314,6 +315,22 @@ def models_check(
             )
 
     console.print(table)
+
+
+@app.command()
+def index_samples(
+    workspace: str = typer.Option("./workspace", help="Path to the workspace directory"),
+):
+    """Build a workspace-level sample index from task data."""
+    ws = resolve_workspace(workspace)
+    result = build_sample_index(ws)
+    console.print(f"[bold]Sample Index[/bold]")
+    console.print(f"Samples: {len(result.samples)}")
+    console.print(f"Unlinked tasks: {len(result.unlinked_tasks)}")
+    if result.warnings:
+        for w in result.warnings:
+            console.print(f"[yellow]Warning: {w}[/yellow]")
+    console.print(f"[dim]Saved to: {ws / 'sample_index.json'}[/dim]")
 
 
 def main():
