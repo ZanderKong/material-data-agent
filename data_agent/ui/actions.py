@@ -21,10 +21,10 @@ def do_ingest(inbox_path: str, ws: Path) -> dict[str, Any]:
     if not inbox.exists():
         return {"success": False, "task_count": 0, "message": f"Inbox not found: {inbox}", "task_ids": []}
 
-    conn = init_db(ws)
+    conn = None
     try:
+        conn = init_db(ws)
         task_ids = ingest_inbox(inbox, ws, conn)
-        conn.close()
         return {
             "success": True,
             "task_count": len(task_ids),
@@ -33,6 +33,9 @@ def do_ingest(inbox_path: str, ws: Path) -> dict[str, Any]:
         }
     except Exception as e:
         return {"success": False, "task_count": 0, "message": _safe_msg(e), "task_ids": []}
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def do_upload_ingest(uploaded_files: list[Any], ws: Path) -> dict[str, Any]:
@@ -45,17 +48,16 @@ def do_upload_ingest(uploaded_files: list[Any], ws: Path) -> dict[str, Any]:
     tmp_inbox.mkdir(parents=True, exist_ok=True)
 
     saved = []
-    for uf in uploaded_files:
-        dest = tmp_inbox / uf.name
-        with open(dest, "wb") as f:
-            f.write(uf.getbuffer())
-        saved.append({"name": uf.name, "size": uf.size})
-
-    conn = init_db(ws)
+    conn = None
     try:
+        for uf in uploaded_files:
+            dest = tmp_inbox / uf.name
+            with open(dest, "wb") as f:
+                f.write(uf.getbuffer())
+            saved.append({"name": uf.name, "size": uf.size})
+
+        conn = init_db(ws)
         task_ids = ingest_inbox(tmp_inbox, ws, conn)
-        conn.close()
-        shutil.rmtree(tmp_inbox, ignore_errors=True)
         return {
             "success": True,
             "task_count": len(task_ids),
@@ -64,8 +66,11 @@ def do_upload_ingest(uploaded_files: list[Any], ws: Path) -> dict[str, Any]:
             "uploaded": saved,
         }
     except Exception as e:
-        shutil.rmtree(tmp_inbox, ignore_errors=True)
         return {"success": False, "task_count": 0, "message": _safe_msg(e), "task_ids": []}
+    finally:
+        if conn is not None:
+            conn.close()
+        shutil.rmtree(tmp_inbox, ignore_errors=True)
 
 
 def do_process_all(ws: Path, model_mode: str = "local") -> dict[str, Any]:

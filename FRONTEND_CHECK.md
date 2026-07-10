@@ -208,3 +208,28 @@ mkdir -p /tmp/material-agent-ui-ws
 - 增加 model_result 对比视图（rerun 前后）
 - 增加批量 approve 操作
 - 考虑 FastAPI + React 为生产环境迁移
+
+## 13. UI Patch Recheck（2026-07-10）
+
+窄范围 UI patch 复查，不改 SQLite schema、模型路由或 ingest/process/review workflow。
+
+### 变更内容
+
+| 变更 | 文件 | 说明 |
+|------|------|------|
+| 连接清理 | `actions.py` | `do_ingest()` / `do_upload_ingest()` 使用 `try/finally`，conn 和临时目录保证清理，不再在 success path 中手动 close |
+| Quality Flag 脱敏 | `app.py` | 展示前对 `flag["message"]` 调用 `safe_display_text()`，sk-* / Bearer / env 值不出现在 flag 文本中 |
+| Raw Response 兼容 | `preview.py` + `app.py` | 新增 `select_raw_response()`，按 `raw_response_redacted` → `raw_text` → `raw_response` 顺序取值，支持 dict/list 序列化，结果经 `safe_display_text()` 脱敏 |
+
+### 新增测试（3 个）
+
+- `test_conn_closed_when_ingest_raises`：mocked ingest 抛异常时 conn 只 close 一次，返回脱敏错误消息
+- `select_raw_response` 系列 6 个 test：验证优先级、dict/list 序列化、全空返回空字符串
+- `safe_display_text` 对 quality flag 消息脱敏 3 个 test：sk-* token、Bearer header、env 真实值
+
+### 验收结果
+
+- **pytest**: 190 passed in 7.24s
+- **compileall**: clean（无错误输出）
+- **全量测试**：新增 10 个 test，原有 180 个全部通过
+

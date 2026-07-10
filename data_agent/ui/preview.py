@@ -152,3 +152,20 @@ def preview_model_result(path: Path) -> dict[str, Any] | None:
         "extracted": extracted,
         "raw": raw,
     }
+
+
+def select_raw_response(raw: dict[str, Any]) -> str:
+    """Pick the first non-empty raw response with fallback order and type coercion.
+
+    Order: raw_response_redacted → raw_text → raw_response
+    Returns empty string when all are empty.
+    """
+    for key in ("raw_response_redacted", "raw_text", "raw_response"):
+        value = raw.get(key)
+        if value is not None and value != "":
+            if isinstance(value, str):
+                return value
+            if isinstance(value, (dict, list)):
+                return json.dumps(value, ensure_ascii=False, indent=2, default=str)
+            return str(value)
+    return ""

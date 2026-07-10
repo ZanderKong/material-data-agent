@@ -23,7 +23,7 @@ from data_agent.ui.readers import (
 from data_agent.ui.status import derive_display_status, status_display_name
 from data_agent.ui.preview import (
     get_file_kind, preview_image, preview_csv, preview_csv_dataframe,
-    preview_json, preview_text, preview_model_result,
+    preview_json, preview_text, preview_model_result, select_raw_response,
 )
 from data_agent.ui.actions import do_ingest, do_upload_ingest, do_process_all, do_process_task, do_review
 from data_agent.ui.security import safe_ui_error, safe_display_text
@@ -332,11 +332,9 @@ with tab_detail:
                                         st.caption("No extracted output")
 
                                 with st.expander("Raw Response (redacted)", expanded=False):
-                                    raw_text = raw_data.get("raw_text", "")
-                                    raw_redacted = raw_data.get("raw_response_redacted", "")
-                                    display_raw = safe_display_text(raw_redacted or raw_text)
+                                    display_raw = safe_display_text(select_raw_response(raw_data))
                                     if display_raw:
-                                        st.text_area("Raw", str(display_raw)[:2000], height=150, key=f"raw_resp_{df_info['name']}")
+                                        st.text_area("Raw", display_raw[:2000], height=150, key=f"raw_resp_{df_info['name']}")
                                     else:
                                         st.caption("No raw response available")
                         st.divider()
@@ -381,10 +379,11 @@ with tab_detail:
                         requires = flag.get("requires_review", False)
                         icon = "Review" if requires else "Info"
                         severity = flag.get("severity", "info")
+                        message = safe_display_text(str(flag.get("message", "")))
                         if requires:
-                            st.warning(f"{icon}: {flag.get('message','')} (severity={severity}, confidence={flag.get('confidence',0):.2f})")
+                            st.warning(f"{icon}: {message} (severity={severity}, confidence={flag.get('confidence',0):.2f})")
                         else:
-                            st.info(f"{icon}: {flag.get('message','')} (severity={severity}, confidence={flag.get('confidence',0):.2f})")
+                            st.info(f"{icon}: {message} (severity={severity}, confidence={flag.get('confidence',0):.2f})")
 
             # --- Relationships ---
             with st.expander("Relationships", expanded=False):
