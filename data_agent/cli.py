@@ -326,7 +326,11 @@ def index_samples(
 ):
     """Build a workspace-level sample index from task data."""
     ws = resolve_workspace(workspace)
-    result = build_sample_index(ws)
+    try:
+        result = build_sample_index(ws)
+    except OSError as e:
+        console.print(f"[red]Failed to write sample index: {e}[/red]")
+        raise typer.Exit(1)
     console.print(f"[bold]Sample Index[/bold]")
     console.print(f"Samples: {len(result.samples)}")
     console.print(f"Unlinked tasks: {len(result.unlinked_tasks)}")

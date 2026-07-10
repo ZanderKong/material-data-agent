@@ -370,16 +370,27 @@ with tab_detail:
 
                                 with st.expander("Extracted Output", expanded=True):
                                     output_json = extracted.get("output_json", {})
-                                    if output_json:
-                                        st.json(output_json)
+                                    if view_mode == "Advanced":
+                                        if output_json:
+                                            st.json(output_json)
+                                        else:
+                                            st.caption("No extracted output")
                                     else:
-                                        st.caption("No extracted output")
+                                        fmt = format_model_output(output_json)
+                                        if any(v for v in fmt.values() if v):
+                                            for k, v in fmt.items():
+                                                if v:
+                                                    st.caption(f"{k}: {v}")
+                                        else:
+                                            st.caption("No extracted output")
 
-                                with st.expander("Raw Response (redacted)", expanded=False):
-                                    display_raw = safe_display_text(select_raw_response(raw_data))
-                                    if display_raw:
-                                        st.text_area("Raw", display_raw[:2000], height=150, key=f"raw_resp_{df_info['name']}")
-                                    else:
+                                if view_mode == "Advanced":
+                                    with st.expander("Raw Response (redacted)", expanded=False):
+                                        display_raw = safe_display_text(select_raw_response(raw_data))
+                                        if display_raw:
+                                            st.text_area("Raw", display_raw[:2000], height=150, key=f"raw_resp_{df_info['name']}")
+                                        else:
+                                            st.caption("No raw response available")
                                         st.caption("No raw response available")
                         st.divider()
                     elif kind == "image":

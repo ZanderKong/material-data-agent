@@ -132,6 +132,8 @@ def do_export_package(ws: Path, task_id: str, output_path: str | None = None) ->
 def do_index_samples(ws: Path) -> dict[str, Any]:
     try:
         result = build_sample_index(ws)
-        return result.model_dump()
+        return {"success": True, **result.model_dump()}
+    except OSError as e:
+        return {"success": False, "samples": [], "unlinked_tasks": [], "warnings": [_safe_msg(e)], "schema_version": "", "generated_at": ""}
     except Exception as e:
-        return {"samples": [], "unlinked_tasks": [], "warnings": [_safe_msg(e)], "schema_version": "", "generated_at": ""}
+        return {"success": False, "samples": [], "unlinked_tasks": [], "warnings": [_safe_msg(e)], "schema_version": "", "generated_at": ""}

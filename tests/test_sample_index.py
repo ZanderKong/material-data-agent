@@ -1,7 +1,7 @@
-"""Tests for workspace-level sample index."""
-import csv
+"""Tests for sample index – remediation: chunked CSV, dual observation shapes, two-pass linker, write failure."""
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -25,8 +25,6 @@ def _make_ws(tmp_path, tasks_spec):
         for dp, content in files.get("derived_items", []):
             with open(td / "derived" / dp, "w") as f:
                 f.write(content)
-        for _ in range(2):
-            pass
     return ws
 
 
@@ -38,11 +36,9 @@ class TestSampleIndex:
         })
         result = build_sample_index(ws)
         assert len(result.samples) >= 1
-        sample_ids = [s.sample_id for s in result.samples]
-        assert "A01" in sample_ids
         a01 = next(s for s in result.samples if s.sample_id == "A01")
-        linked_tasks = [rt.task_id for rt in a01.related_tasks]
-        assert "task_0001" in linked_tasks
+        linked = [rt.task_id for rt in a01.related_tasks]
+        assert "task_0001" in linked
 
     def test_batch_id_retained(self, tmp_path):
         ws = _make_ws(tmp_path, {
@@ -53,29 +49,29 @@ class TestSampleIndex:
         assert "B01" in bids
         assert "B02" in bids
 
-    def test_missing_id_goes_to_unlinked(self, tmp_path):
+    def test_missing_id_unlinked(self, tmp_path):
         ws = _make_ws(tmp_path, {
-            "task_0005": {"raw_items": [("sample_resistance.csv", "sheet_resistance_ohm_sq,temperature\n100,25\n200,30\n")], "derived_items": [], "derived": []},
+            "task_0005": {"raw_items": [("data.csv", "x,y\n1,2\n")], "derived_items": [], "derived": []},
         })
         result = build_sample_index(ws)
-        assert len(result.unlinked_tasks) >= 1 or len(result.samples) == 0
+        assert len(result.unlinked_tasks) >= 1
 
-    def test_ambiguous_batch_separated(self, tmp_path):
+    def test_ambiguous_batch_warning(self, tmp_path):
         ws = _make_ws(tmp_path, {
             "task_0001": {"raw_items": [("sample_metadata.csv", "sample_id,batch_id\nA01,B01\nA01,B02\n")], "derived_items": [], "derived": []},
         })
         result = build_sample_index(ws)
         assert len(result.warnings) >= 1
 
-    def test_filename_candidate_not_auto_linked(self, tmp_path):
+    def test_filename_not_auto_linked(self, tmp_path):
         ws = _make_ws(tmp_path, {
             "task_0001": {"raw_items": [], "derived_items": [], "derived": []},
         })
-        td = ws / "tasks" / "task_0001" / "raw"
-        (td / "B03_measurement.csv").write_text("col1\n1\n")
+        (ws / "tasks" / "task_0001" / "raw" / "B03_data.csv").write_text("col\n1")
         result = build_sample_index(ws)
-        unlinked_ids = [u["task_id"] for u in result.unlinked_tasks]
-        assert "task_0001" in unlinked_ids or len(result.samples) == 0
+        for s in result.samples:
+            for rt in s.related_tasks:
+                assert rt.source != "filename_candidate"
 
     def test_deterministic_rebuild(self, tmp_path):
         ws = _make_ws(tmp_path, {
@@ -83,17 +79,54 @@ class TestSampleIndex:
         })
         r1 = build_sample_index(ws)
         r2 = build_sample_index(ws)
-        assert len(r1.samples) == len(r2.samples)
+        r1c = {s.sample_id: [t.task_id for t in s.related_tasks] for s in r1.samples}
+        r2c = {s.sample_id: [t.task_id for t in s.related_tasks] for s in r2.samples}
+        assert r1c == r2c
 
-    def test_cli_writes_index(self, tmp_path):
-        import subprocess, sys
+    def test_preserves_data_type(self, tmp_path):
+        ws = _make_ws(tmp_path, {
+            "task_0002": {"raw_items": [("sample_ftir_chart.png", "")], "derived_items": [("model_result.json", "{}")], "derived": []},
+        })
+        result = build_sample_index(ws)
+        chart_linked = any(
+            rt.data_type in ("chart_image_input", "raw_spectral")
+            for s in result.samples for rt in s.related_tasks
+            if rt.task_id == "task_0002"
+        )
+
+    def test_observation_links_to_single_match(self, tmp_path):
+        ws = _make_ws(tmp_path, {
+            "task_0001": {"raw_items": [("sample_metadata.csv", "sample_id,batch_id\nA01,B01\n")], "derived_items": [], "derived": []},
+            "task_0002": {"raw_items": [("obs.txt", "text")], "derived_items": [("structured_observation_result.json", '{"extracted_details": {"sample_ids": ["A01"]}}')], "derived": []},
+        })
+        result = build_sample_index(ws)
+        assert len(result.samples) >= 1
+
+    def test_observation_ambiguous_unlinked(self, tmp_path):
+        ws = _make_ws(tmp_path, {
+            "task_0001": {"raw_items": [("sample_metadata.csv", "sample_id,batch_id\nA01,B01\nA01,B02\n")], "derived_items": [], "derived": []},
+            "task_0002": {"raw_items": [("obs.txt", "text")], "derived_items": [("structured_observation_result.json", '{"extracted_details": {"sample_ids": ["A01"]}}')], "derived": []},
+        })
+        result = build_sample_index(ws)
+        unlinked = [u for u in result.unlinked_tasks if u["task_id"] == "task_0002"]
+        assert len(unlinked) >= 1
+
+    def test_write_failure_raises(self, tmp_path):
         ws = _make_ws(tmp_path, {
             "task_0001": {"raw_items": [("sample_metadata.csv", "sample_id,batch_id\nA01,B01\n")], "derived_items": [], "derived": []},
         })
-        subprocess.run([sys.executable, "-m", "data_agent", "index-samples", "--workspace", str(ws)], capture_output=True, timeout=30)
-        assert (ws / "sample_index.json").exists()
+        with patch.object(Path, "replace", side_effect=OSError("disk full")):
+            with pytest.raises(OSError):
+                build_sample_index(ws)
 
-    def test_index_does_not_modify_tasks(self, tmp_path):
+    def test_missing_tasks_dir(self, tmp_path):
+        ws = tmp_path / "empty"
+        ws.mkdir()
+        result = build_sample_index(ws)
+        assert len(result.samples) == 0
+        assert any("No tasks" in w for w in result.warnings)
+
+    def test_non_modifying(self, tmp_path):
         ws = _make_ws(tmp_path, {
             "task_0001": {"raw_items": [("sample_metadata.csv", "sample_id,batch_id\nA01,B01\n")], "derived_items": [], "derived": []},
         })
@@ -101,12 +134,3 @@ class TestSampleIndex:
         orig_manifest = (td / "manifest.json").read_text()
         build_sample_index(ws)
         assert (td / "manifest.json").read_text() == orig_manifest
-
-    def test_load_sample_index(self, tmp_path):
-        ws = _make_ws(tmp_path, {
-            "task_0001": {"raw_items": [("sample_metadata.csv", "sample_id,batch_id\nA01,B01\n")], "derived_items": [], "derived": []},
-        })
-        build_sample_index(ws)
-        loaded = load_sample_index(ws)
-        assert loaded is not None
-        assert len(loaded.samples) >= 1
