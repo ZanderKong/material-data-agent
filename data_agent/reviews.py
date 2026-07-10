@@ -15,6 +15,7 @@ def write_review(
     reviewer: str,
     comment: str = "",
     target_id: str = "",
+    target_type: str = "task",
 ) -> ReviewRecord:
     action_enum = ReviewAction(action)
     task_dir = workspace / "tasks" / task_id
@@ -23,7 +24,7 @@ def write_review(
         task_id=task_id,
         reviewer=reviewer,
         action=action_enum,
-        target_type="task" if not target_id else "data_object",
+        target_type=target_type if target_id else "task",
         target_id=target_id or task_id,
         comment=comment,
     )

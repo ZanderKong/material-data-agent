@@ -1,6 +1,7 @@
 """Streamlit local UI for Material R&D Data Processing Agent."""
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -22,20 +23,29 @@ from .readers import (
 from .status import derive_display_status, status_display_name
 from .preview import get_file_kind, preview_image, preview_csv, preview_json, preview_text, preview_model_result
 from .actions import do_ingest, do_upload_ingest, do_process_all, do_process_task, do_review
+from .security import safe_ui_error
 
 st.set_page_config(page_title="Material Data Agent", layout="wide")
 
 
 def _init_session():
     defaults = {
-        "workspace_path": "./workspace",
+        "workspace_path": os.environ.get("DATA_AGENT_UI_WORKSPACE", "./workspace"),
         "selected_task_id": None,
         "task_list": [],
+        "task_list_workspace": "",
         "model_mode": "local",
     }
     for k, v in defaults.items():
         if k not in st.session_state:
             st.session_state[k] = v
+
+
+def _auto_refresh_task_list(ws: Path):
+    key = str(ws.resolve())
+    if st.session_state.get("task_list_workspace") != key:
+        st.session_state.task_list = read_task_list(ws)
+        st.session_state.task_list_workspace = key
 
 
 _init_session()
@@ -44,8 +54,7 @@ st.title("Material R&D Data Processing Agent")
 
 
 def _error_redacted(exc: Exception) -> str:
-    msg = str(exc)
-    return f"Error: {msg[:500]}"
+    return safe_ui_error(exc)
 
 
 # ---- Sidebar ----
@@ -77,7 +86,10 @@ with st.sidebar:
 
     if st.button("Refresh"):
         st.session_state.task_list = read_task_list(ws)
+        st.session_state.task_list_workspace = str(ws.resolve())
         st.rerun()
+
+_auto_refresh_task_list(ws)
 
 
 # ---- Tabs ----
@@ -117,8 +129,9 @@ with tab_ingest:
             if result["success"]:
                 st.success(f"{result['message']}. Task IDs: {', '.join(result['task_ids'])}")
                 st.session_state.task_list = read_task_list(ws)
+                st.session_state.task_list_workspace = str(ws.resolve())
             else:
-                st.error(result["message"])
+                st.error(safe_ui_error(result["message"]))
 
     else:
         uploaded = st.file_uploader("Choose files", accept_multiple_files=True)
@@ -132,8 +145,9 @@ with tab_ingest:
             if result["success"]:
                 st.success(result["message"])
                 st.session_state.task_list = read_task_list(ws)
+                st.session_state.task_list_workspace = str(ws.resolve())
             else:
-                st.error(result["message"])
+                st.error(safe_ui_error(result["message"]))
 
 
 # ==== Tab: Tasks ====
@@ -201,7 +215,7 @@ with tab_detail:
     else:
         task_dir = ws / "tasks" / tid
         if not task_dir.exists():
-            st.error(f"Task directory not found: {task_dir}")
+            st.error(safe_ui_error(f"Task directory not found: {task_dir}"))
         else:
             manifest = read_task_manifest(task_dir)
             raw_files = read_raw_files(task_dir)
@@ -235,7 +249,10 @@ with tab_detail:
                     kind = get_file_kind(rpath)
                     if kind == "image":
                         st.image(str(rpath), caption=rf["name"], width=400)
-                    elif kind in ("csv", "text"):
+                    elif kind == "csv":
+                        content = preview_csv(rpath) or ""
+                        st.text_area("Content", content, height=200, key=f"raw_{rf['name']}")
+                    elif kind == "text":
                         content = preview_text(rpath) or ""
                         st.text_area("Content", content, height=120, key=f"raw_{rf['name']}")
                     elif kind == "json":
@@ -255,23 +272,65 @@ with tab_detail:
                         data = preview_model_result(dpath)
                         if data:
                             if data.get("_error"):
-                                st.error(data["_error"])
+                                st.error(safe_ui_error(data["_error"]))
                             else:
-                                c_success, c_role, c_conf, c_fb = st.columns(4)
-                                with c_success:
-                                    st.metric("Success", str(data.get("success")))
-                                with c_role:
-                                    st.metric("Role", str(data.get("role")))
-                                with c_conf:
-                                    st.metric("Confidence", f"{data.get('confidence', 0):.2f}")
-                                with c_fb:
-                                    st.metric("Fallback", "Yes" if data.get("fallback_used") else "No")
-                                if data.get("error"):
-                                    st.warning(f"Error: {data['error']}")
-                                if data.get("warnings"):
-                                    for w in data["warnings"]:
-                                        st.caption(f"Warning: {w}")
-                                st.json(data.get("output_json", {}))
+                                st.caption(":warning: model_result 是模型辅助提取结果，不是科研结论。")
+                                st.caption(":warning: requires_review=True 时必须人工确认。")
+                                st.caption(":warning: success=False 表示模型不可用、fallback 或 stub，不代表分析成功。")
+
+                                audit = data.get("audit", {})
+                                risk = data.get("risk", {})
+                                extracted = data.get("extracted", {})
+                                raw_data = data.get("raw", {})
+
+                                with st.expander("Audit", expanded=True):
+                                    col_a1, col_a2, col_a3 = st.columns(3)
+                                    with col_a1:
+                                        st.metric("Role", str(audit.get("role")))
+                                        st.metric("Provider", str(audit.get("provider")))
+                                        st.metric("Model", str(audit.get("model")))
+                                    with col_a2:
+                                        st.metric("Mode", str(audit.get("mode")))
+                                        st.metric("Success", str(audit.get("success")))
+                                        st.metric("Confidence", f"{audit.get('confidence', 0):.2f}")
+                                    with col_a3:
+                                        st.metric("Fallback", "Yes" if audit.get("fallback_used") else "No")
+                                        st.metric("Fallback From", str(audit.get("fallback_from") or "-"))
+                                        st.metric("Latency", f"{audit.get('latency_ms', 0)}ms")
+                                    if audit.get("token_usage"):
+                                        st.caption(f"Token usage: {audit['token_usage']}")
+                                    if audit.get("schema_version"):
+                                        st.caption(f"Schema: {audit['schema_version']}  |  Prompt: {audit['prompt_version']}")
+
+                                with st.expander("Risk", expanded=False):
+                                    if risk.get("error"):
+                                        st.warning(f"Error: {safe_ui_error(risk['error'])}")
+                                    if risk.get("warnings"):
+                                        for w in risk["warnings"]:
+                                            st.caption(f"Warning: {safe_ui_error(str(w))}")
+                                    col_r1, col_r2, col_r3 = st.columns(3)
+                                    with col_r1:
+                                        st.metric("Requires Review", str(risk.get("requires_review")))
+                                    with col_r2:
+                                        st.metric("OCR Unavailable", str(risk.get("ocr_unavailable")))
+                                    with col_r3:
+                                        st.metric("Vision Unavailable", str(risk.get("vision_unavailable")))
+
+                                with st.expander("Extracted Output", expanded=True):
+                                    output_json = extracted.get("output_json", {})
+                                    if output_json:
+                                        st.json(output_json)
+                                    else:
+                                        st.caption("No extracted output")
+
+                                with st.expander("Raw Response (redacted)", expanded=False):
+                                    raw_text = raw_data.get("raw_text", "")
+                                    raw_redacted = raw_data.get("raw_response_redacted", "")
+                                    display_raw = raw_redacted or raw_text
+                                    if display_raw:
+                                        st.text_area("Raw", str(display_raw)[:2000], height=150, key=f"raw_resp_{df_info['name']}")
+                                    else:
+                                        st.caption("No raw response available")
                         st.divider()
                     elif kind == "image":
                         st.image(str(dpath), caption=label, width=400)
@@ -320,9 +379,10 @@ with tab_detail:
                     st.caption("No relationships")
                 else:
                     st.dataframe([{
-                        "type": r.get("rel_type", ""),
-                        "source": r.get("source_id", "")[:20],
-                        "target": r.get("target_id", "")[:20],
+                        "rel_type": r.get("rel_type", ""),
+                        "source_id": r.get("source_id", ""),
+                        "target_id": r.get("target_id", ""),
+                        "run_id": (r.get("metadata", {}) or {}).get("run_id", r.get("run_id", "")),
                     } for r in rels], use_container_width=True)
 
             # --- Review Records ---
@@ -344,6 +404,7 @@ with tab_detail:
 
             with col_process:
                 st.markdown("**Process / Rerun**")
+                st.caption("Rerun will create new L2 derived files. Old L2 files will be kept. Replacement relationships will be recorded as replaces/replaced_by. Raw files will not be modified.")
                 process_mode = st.selectbox(
                     "Model mode",
                     ["local", "auto", "cloud"],
@@ -357,7 +418,7 @@ with tab_detail:
                         st.success(result["message"])
                         st.rerun()
                     else:
-                        st.error(result["message"])
+                        st.error(safe_ui_error(result["message"]))
 
                 if st.button("Process All Tasks", key="btn_process_all"):
                     with st.spinner(f"Processing all tasks..."):
@@ -366,7 +427,7 @@ with tab_detail:
                         st.success(result["message"])
                         st.rerun()
                     else:
-                        st.error(result["message"])
+                        st.error(safe_ui_error(result["message"]))
 
             with col_review:
                 st.markdown("**Review**")
@@ -377,6 +438,20 @@ with tab_detail:
                 )
                 reviewer = st.text_input("Reviewer", key="review_reviewer")
                 comment = st.text_area("Comment", key="review_comment")
+                target_type = st.selectbox(
+                    "Target type",
+                    ["task", "quality_flag", "data_object", "derived_file"],
+                    key="review_target_type",
+                )
+                target_id = st.text_input(
+                    "Target ID (leave empty for current task)",
+                    key="review_target_id",
+                    placeholder="e.g. flag_001",
+                )
+                if flags:
+                    flag_ids = [f.get("flag_id", "") for f in flags if f.get("flag_id")]
+                    if flag_ids:
+                        st.caption(f"Available flag IDs: {', '.join(flag_ids)}")
 
                 if review_action == "deprecate":
                     confirm = st.checkbox("I confirm this will deprecate the current results", key="deprecate_confirm")
@@ -385,12 +460,12 @@ with tab_detail:
 
                 if st.button("Submit Review", key="btn_review", disabled=not confirm):
                     with st.spinner("Recording review..."):
-                        result = do_review(ws, tid, review_action, reviewer, comment)
+                        result = do_review(ws, tid, review_action, reviewer, comment, target_type, target_id)
                     if result["success"]:
                         st.success(result["message"])
                         st.rerun()
                     else:
-                        st.error(result["message"])
+                        st.error(safe_ui_error(result["message"]))
 
 
 # ==== Tab: Model Profiles ====

@@ -2,9 +2,18 @@
 
 ## 当前验收状态
 
+### 模型层历史 checkpoint（2026-07-09）
+
 - **日期**：2026-07-09
 - **pytest**：112 passed, 0 skipped, 0 failed
 - **demo workspace**：`/tmp/material-agent-ws`
+
+### 前端收口后全项目测试结果（2026-07-10）
+
+- **日期**：2026-07-10
+- **pytest**：174 passed, 0 skipped, 0 failed
+- **范围**：全项目测试（含模型层 112 + UI 层 38 + 本轮新增 16）。
+- **说明**：此结果与 2026-07-09 的 112 passed 不矛盾——前者是模型层验收时的 snapshot，本次是前端收口后的全量结果。
 
 ## 审计 SQL 验证
 
@@ -128,3 +137,4 @@ task_XXXX/
 - Markdown processing_report.md：无 API key。
 - CLI `models check --verbose`：显示 `configured/missing`，不泄露 key 值。
 - HTTP error / RequestException message：已 redaction。
+- Streamlit UI 所有错误展示：已通过 `safe_ui_error()` 脱敏。

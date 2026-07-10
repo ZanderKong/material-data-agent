@@ -2,14 +2,18 @@
 from __future__ import annotations
 
 import shutil
-import tempfile
 from pathlib import Path
 from typing import Any
 
-from ..db import init_db, get_conn
+from ..db import init_db
 from ..ingest import ingest_inbox
 from ..process import process_all_tasks, process_single_task
 from ..reviews import write_review as _write_review
+from .security import safe_ui_error
+
+
+def _safe_msg(exc: Exception) -> str:
+    return safe_ui_error(str(exc))
 
 
 def do_ingest(inbox_path: str, ws: Path) -> dict[str, Any]:
@@ -28,7 +32,7 @@ def do_ingest(inbox_path: str, ws: Path) -> dict[str, Any]:
             "task_ids": task_ids,
         }
     except Exception as e:
-        return {"success": False, "task_count": 0, "message": str(e), "task_ids": []}
+        return {"success": False, "task_count": 0, "message": _safe_msg(e), "task_ids": []}
 
 
 def do_upload_ingest(uploaded_files: list[Any], ws: Path) -> dict[str, Any]:
@@ -61,7 +65,7 @@ def do_upload_ingest(uploaded_files: list[Any], ws: Path) -> dict[str, Any]:
         }
     except Exception as e:
         shutil.rmtree(tmp_inbox, ignore_errors=True)
-        return {"success": False, "task_count": 0, "message": str(e), "task_ids": []}
+        return {"success": False, "task_count": 0, "message": _safe_msg(e), "task_ids": []}
 
 
 def do_process_all(ws: Path, model_mode: str = "local") -> dict[str, Any]:
@@ -69,7 +73,7 @@ def do_process_all(ws: Path, model_mode: str = "local") -> dict[str, Any]:
         count = process_all_tasks(ws, model_mode)
         return {"success": True, "count": count, "message": f"Processed {count} task(s)"}
     except Exception as e:
-        return {"success": False, "count": 0, "message": str(e)}
+        return {"success": False, "count": 0, "message": _safe_msg(e)}
 
 
 def do_process_task(ws: Path, task_id: str, model_mode: str = "local") -> dict[str, Any]:
@@ -79,7 +83,7 @@ def do_process_task(ws: Path, task_id: str, model_mode: str = "local") -> dict[s
             return {"success": True, "message": f"Task {task_id} processed successfully"}
         return {"success": False, "message": f"Task {task_id} processing returned False"}
     except Exception as e:
-        return {"success": False, "message": str(e)}
+        return {"success": False, "message": _safe_msg(e)}
 
 
 def do_review(
@@ -88,11 +92,13 @@ def do_review(
     action: str,
     reviewer: str = "",
     comment: str = "",
+    target_type: str = "task",
+    target_id: str = "",
 ) -> dict[str, Any]:
     if not reviewer.strip():
         return {"success": False, "message": "Reviewer name is required"}
     try:
-        _write_review(ws, task_id, action, reviewer, comment)
+        _write_review(ws, task_id, action, reviewer, comment, target_id, target_type)
         return {"success": True, "message": f"Review '{action}' recorded by {reviewer}"}
     except Exception as e:
-        return {"success": False, "message": str(e)}
+        return {"success": False, "message": _safe_msg(e)}

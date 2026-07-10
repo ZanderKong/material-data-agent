@@ -29,6 +29,19 @@ def preview_image(path: Path) -> str | None:
     return str(path)
 
 
+def _preview_csv_fallback(path: Path, max_rows: int = 50) -> str | None:
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            lines = []
+            for i, line in enumerate(fh):
+                if i > max_rows:
+                    break
+                lines.append(line.rstrip("\n"))
+            return "\n".join(lines)
+    except Exception:
+        return None
+
+
 def preview_csv(path: Path, max_rows: int = 50) -> str | None:
     if not path.exists():
         return None
@@ -37,12 +50,7 @@ def preview_csv(path: Path, max_rows: int = 50) -> str | None:
         df = pd.read_csv(path, nrows=max_rows)
         return df.to_csv(index=False)
     except Exception:
-        try:
-            text = path.read_text(encoding="utf-8")
-            lines = text.strip().split("\n")
-            return "\n".join(lines[:max_rows + 1])
-        except Exception:
-            return None
+        return _preview_csv_fallback(path, max_rows)
 
 
 def preview_json(path: Path) -> str | None:
@@ -81,7 +89,11 @@ def preview_model_result(path: Path) -> dict[str, Any] | None:
     if not isinstance(data, dict):
         return {"_error": "Not a dict"}
 
-    top_fields = {
+    output = data.get("output_json", {})
+    if not isinstance(output, dict):
+        output = {}
+
+    audit = {
         "role": data.get("role", ""),
         "provider": data.get("provider", ""),
         "model": data.get("model", ""),
@@ -94,25 +106,38 @@ def preview_model_result(path: Path) -> dict[str, Any] | None:
         "token_usage": data.get("token_usage", {}),
         "schema_version": data.get("schema_version", ""),
         "prompt_version": data.get("prompt_version", ""),
-        "warnings": data.get("warnings", []),
-        "error": data.get("error", ""),
-        "output_json": data.get("output_json", {}),
     }
 
-    output = data.get("output_json", {})
-    if isinstance(output, dict):
-        top_fields["requires_review"] = output.get("requires_review", False)
-        top_fields["ocr_unavailable"] = output.get("ocr_unavailable", False)
-        top_fields["vision_unavailable"] = output.get("vision_unavailable", False)
-        top_fields["text_blocks"] = output.get("text_blocks")
-        top_fields["detected_units"] = output.get("detected_units")
-        top_fields["axis_candidates"] = output.get("axis_candidates")
-        top_fields["image_kind"] = output.get("image_kind")
-        top_fields["visible_features"] = output.get("visible_features")
-        top_fields["uncertainties"] = output.get("uncertainties")
-        top_fields["factual_observations"] = output.get("factual_observations")
-        top_fields["interpretation_candidates"] = output.get("interpretation_candidates")
-        top_fields["method"] = output.get("method")
-        top_fields["note"] = output.get("note")
+    risk = {
+        "warnings": data.get("warnings", []),
+        "error": data.get("error", ""),
+        "requires_review": output.get("requires_review", False),
+        "ocr_unavailable": output.get("ocr_unavailable", False),
+        "vision_unavailable": output.get("vision_unavailable", False),
+    }
 
-    return top_fields
+    extracted = {
+        "output_json": output,
+        "text_blocks": output.get("text_blocks"),
+        "detected_units": output.get("detected_units"),
+        "axis_candidates": output.get("axis_candidates"),
+        "visible_features": output.get("visible_features"),
+        "factual_observations": output.get("factual_observations"),
+        "interpretation_candidates": output.get("interpretation_candidates"),
+        "image_kind": output.get("image_kind"),
+        "method": output.get("method"),
+        "note": output.get("note"),
+    }
+
+    raw = {
+        "raw_text": data.get("raw_text", ""),
+        "raw_response": data.get("raw_response", ""),
+        "raw_response_redacted": data.get("raw_response_redacted", ""),
+    }
+
+    return {
+        "audit": audit,
+        "risk": risk,
+        "extracted": extracted,
+        "raw": raw,
+    }

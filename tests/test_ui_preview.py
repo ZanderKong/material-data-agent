@@ -61,6 +61,29 @@ class TestPreviewCsv:
         result_lines = result.strip().split("\n")
         assert len(result_lines) <= 51
 
+    def test_csv_fallback_does_not_read_full_large_file(self):
+        lines = [f"col1,col2,col3"] + [f"a{i},b{i},c{i}" for i in range(5000)]
+        content = "\n".join(lines)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, encoding="utf-8") as f:
+            f.write(content)
+            f.flush()
+            path = Path(f.name)
+            result = preview_csv(path, max_rows=50)
+        assert result is not None
+        result_lines = result.strip().split("\n")
+        assert len(result_lines) <= 51
+        assert "a4999" not in result
+
+    def test_csv_fallback_no_pandas_present(self, monkeypatch):
+        import data_agent.ui.preview as pmod
+        monkeypatch.setitem(pmod.__dict__, "pd", None)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, encoding="utf-8") as f:
+            f.write("x,y\n1,2\n3,4\n")
+            f.flush()
+            result = preview_csv(Path(f.name), max_rows=50)
+        assert result is not None
+        assert "x,y" in result
+
     def test_missing_file(self):
         assert preview_csv(Path("/nonexistent/file.csv")) is None
 
@@ -124,6 +147,9 @@ class TestPreviewModelResult:
             "prompt_version": "v1",
             "warnings": ["test_warning"],
             "error": "",
+            "raw_text": "some raw text",
+            "raw_response": "some response",
+            "raw_response_redacted": "redacted response",
             "output_json": {
                 "text_blocks": ["a", "b"],
                 "requires_review": True,
@@ -134,11 +160,34 @@ class TestPreviewModelResult:
             f.flush()
             result = preview_model_result(Path(f.name))
         assert result is not None
-        assert result["role"] == "ocr"
-        assert result["success"] is True
-        assert result["confidence"] == 0.8
-        assert result["text_blocks"] == ["a", "b"]
-        assert result["requires_review"] is True
+        audit = result["audit"]
+        assert audit["role"] == "ocr"
+        assert audit["success"] is True
+        assert audit["confidence"] == 0.8
+        assert result["risk"]["warnings"] == ["test_warning"]
+        assert result["risk"]["requires_review"] is True
+        assert result["extracted"]["text_blocks"] == ["a", "b"]
+        assert result["raw"]["raw_text"] == "some raw text"
+        assert result["raw"]["raw_response_redacted"] == "redacted response"
+
+    def test_output_json_fields_extracted(self):
+        data = {
+            "output_json": {
+                "detected_units": ["mm", "cm"],
+                "axis_candidates": ["x", "y"],
+                "visible_features": ["peak"],
+                "factual_observations": ["curve"],
+                "interpretation_candidates": ["trend"],
+            },
+        }
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
+            json.dump(data, f)
+            f.flush()
+            result = preview_model_result(Path(f.name))
+        assert result is not None
+        assert result["extracted"]["detected_units"] == ["mm", "cm"]
+        assert result["extracted"]["visible_features"] == ["peak"]
+        assert result["extracted"]["factual_observations"] == ["curve"]
 
     def test_invalid_json(self):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:

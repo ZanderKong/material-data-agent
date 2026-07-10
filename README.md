@@ -15,14 +15,16 @@ python3.10 -m venv .venv
 
 ## 当前验收状态
 
-- **当前交付状态**：
-  - 基础 demo 闭环：ingest → process → review → info
-  - 全部 `pytest -q` 通过（91 个测试）
-  - L2 版本化输出（run 前缀）已实现
-  - Rerun 替代关系（replaces/replaced_by）已实现
-  - Marimo 复核工作台可启动（`--print-command` 可 dry-run）
-  - **Model Service Layer 已实现**：可配置模型角色、路由、fallback
-  - **最终交付以 `DELIVERY_PLAN.md` 为准**
+- **基础 demo 闭环**：ingest → process → review → info
+- **Model Service Layer 已实现**：可配置模型角色、路由、fallback
+- **Streamlit Local UI 已实现**：6-tab 前端，支持 ingest/upload/process/review/查看
+- **pytest**：174 passed（2026-07-10 全量运行结果）
+- **L2 版本化输出**：已实现（run 前缀）
+- **Rerun replaces/replaced_by**：已实现
+- **Marimo 复核命令**：可生成
+- **FRONTEND_CHECK.md**：前端验收记录
+- **MODEL_LAYER_CHECK.md**：模型服务层验收记录（历史 checkpoint: 2026-07-09, 112 passed）
+- **docs/ui_walkthrough.md**：UI 操作 walkthrough
 
 ## 快速开始
 
@@ -110,26 +112,53 @@ union all select "reviews", count(*) from reviews;
 
 项目提供 Streamlit 本地 Web UI，可替代 CLI 进行日常操作。
 
-### 安装依赖
-
-```bash
-.venv/bin/python -m pip install -e '.[dev]'
-```
-
 ### 启动 UI
 
 ```bash
+# 推荐：CLI 快捷命令
+.venv/bin/python -m data_agent ui --workspace /tmp/material-agent-ui-ws
+
+# 打印命令（不启动）
+.venv/bin/python -m data_agent ui --workspace /tmp/material-agent-ui-ws --print-command
+
+# 直接使用 Streamlit
 .venv/bin/python -m streamlit run data_agent/ui/app.py
+```
+
+### Demo workspace 验收命令
+
+```bash
+# 准备工作区
+rm -rf /tmp/material-agent-ui-ws
+mkdir -p /tmp/material-agent-ui-ws
+
+# CLI ingest
+.venv/bin/python -m data_agent ingest \
+  --inbox "$DEMO_INBOX" \
+  --workspace /tmp/material-agent-ui-ws
+
+# CLI process (local mode)
+.venv/bin/python -m data_agent process \
+  --workspace /tmp/material-agent-ui-ws \
+  --all --models local
+
+# 启动 UI
+.venv/bin/python -m data_agent ui \
+  --workspace /tmp/material-agent-ui-ws
 ```
 
 ### UI 功能
 
-- **workspace 输入**：选择或输入本地路径
+- **workspace 输入**：选择或输入本地路径，支持 `DATA_AGENT_UI_WORKSPACE` 环境变量预设
 - **ingest / upload**：从 inbox 目录或直接上传文件
-- **task 列表**：按 display_status 筛选和排序
-- **task detail**：查看 raw/derived/runs/flags/reviews，执行 process/review
+- **task 列表**：按 display_status 筛选和排序，进入 workspace 后自动加载
+- **task detail**：查看 raw/derived/runs/flags/relationships/reviews
+  - raw CSV 预览前 50 行（表格形式）
+  - model_result 分区展示（Audit / Risk / Extracted Output / Raw Response）
+- **review**：支持 target type（task / quality_flag / data_object / derived_file），可选 target id
 - **model profiles**：查看配置状态（不泄露 API key）
 - **marimo command**：查看 marimo 复核工作台启动命令
+- **错误脱敏**：所有 UI 错误提示经过安全脱敏，不泄露 API key、Bearer token 或环境变量值
 
 ### UI 模式
 
@@ -137,6 +166,12 @@ UI 中可选择 `local` / `auto` / `cloud` 模式，行为与 CLI 一致：
 - `local`：零网络调用
 - `auto`：优先云端、自动降级
 - `cloud`：仅云端
+
+### 相关文档
+
+- `FRONTEND_CHECK.md`：前端验收记录
+- `MODEL_LAYER_CHECK.md`：模型服务层验收记录
+- `docs/ui_walkthrough.md`：UI 操作 walkthrough
 
 ## 项目结构
 

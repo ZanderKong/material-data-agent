@@ -1,6 +1,9 @@
 """CLI entry point using Typer."""
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -81,12 +84,37 @@ def review(
     reviewer: str = typer.Option(..., help="Reviewer identifier"),
     comment: str = typer.Option("", help="Review comment"),
     target: str = typer.Option("", help="Target ID for the review"),
+    target_type: str = typer.Option("task", "--target-type", help="Target type: task, quality_flag, data_object, derived_file"),
 ):
     ws = resolve_workspace(workspace)
-    review_record = write_review(ws, task, action, reviewer, comment, target)
+    review_record = write_review(ws, task, action, reviewer, comment, target, target_type)
     console.print(f"[green]Review recorded: {review_record.action.value} by {review_record.reviewer}[/green]")
     if comment:
         console.print(f"  Comment: {comment}")
+
+
+@app.command()
+def ui(
+    workspace: str = typer.Option("./workspace", help="Path to the workspace directory"),
+    print_command: bool = typer.Option(False, "--print-command", help="Print the Streamlit command without starting the server"),
+):
+    ws_path = Path(workspace).resolve()
+    streamlit_path = Path(__file__).parent / "ui" / "app.py"
+
+    env = os.environ.copy()
+    env["DATA_AGENT_UI_WORKSPACE"] = str(ws_path)
+
+    cmd = [sys.executable, "-m", "streamlit", "run", str(streamlit_path)]
+
+    console.print(f"[bold]Streamlit command:[/bold]")
+    console.print(f"  DATA_AGENT_UI_WORKSPACE={env['DATA_AGENT_UI_WORKSPACE']}")
+    console.print(f"  {' '.join(cmd)}")
+
+    if not print_command:
+        console.print("\nStarting Streamlit...")
+        subprocess.run(cmd, env=env)
+    else:
+        console.print("\n[green]--print-command mode: not starting server.[/green]")
 
 
 @app.command()
@@ -97,10 +125,6 @@ def open(
 ):
     ws = resolve_workspace(workspace)
     task_id = task or ""
-
-    import subprocess
-    import os
-    import sys
 
     env = os.environ.copy()
     env["DATA_AGENT_WORKSPACE"] = str(ws.resolve())
