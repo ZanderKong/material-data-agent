@@ -33,20 +33,39 @@ def read_workspace_summary(ws: Path) -> dict[str, Any]:
         "has_db": db_path.exists(),
         "has_tasks_dir": tasks_dir.exists(),
         "task_count": 0,
+        "run_count": 0,
+        "flag_count": 0,
+        "review_count": 0,
+        "model_result_count": 0,
+        "invalid_record_count": 0,
         "status_counts": {},
     }
     if not tasks_dir.exists():
         return summary
 
-    count = 0
     for d in sorted(tasks_dir.iterdir()):
-        if d.is_dir() and d.name.startswith("task_"):
-            count += 1
-            manifest = _safe_json(d / "manifest.json")
-            if isinstance(manifest, dict):
-                st = manifest.get("status", "unknown")
-                summary["status_counts"][st] = summary["status_counts"].get(st, 0) + 1
-    summary["task_count"] = count
+        if not d.is_dir() or not d.name.startswith("task_"):
+            continue
+        summary["task_count"] += 1
+        try:
+            manifest = load_manifest(d)
+        except Exception:
+            manifest = None
+        if manifest is None:
+            summary["invalid_record_count"] += 1
+            continue
+        summary["run_count"] += len(manifest.run_ids or [])
+        summary["flag_count"] += len(manifest.flag_ids or [])
+        summary["review_count"] += len(manifest.review_ids or [])
+        st = manifest.status
+        summary["status_counts"][st] = summary["status_counts"].get(st, 0) + 1
+
+        derived_dir = d / "derived"
+        if derived_dir.is_dir():
+            for f in derived_dir.iterdir():
+                if f.is_file() and "model_result" in f.name:
+                    summary["model_result_count"] += 1
+
     summary["workspace_path"] = str(ws.resolve())
     return summary
 

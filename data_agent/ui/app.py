@@ -27,6 +27,7 @@ from data_agent.ui.preview import (
 )
 from data_agent.ui.actions import do_ingest, do_upload_ingest, do_process_all, do_process_task, do_review, do_validate_package
 from data_agent.ui.security import safe_ui_error, safe_display_text
+from data_agent.ui.presentation import format_quality_flag, format_model_output, cloud_mode_notice
 
 st.set_page_config(page_title="Material Data Agent", layout="wide")
 
@@ -84,6 +85,9 @@ with st.sidebar:
         ["local", "auto", "cloud"],
         index=["local", "auto", "cloud"].index(st.session_state.model_mode),
     )
+    notice = cloud_mode_notice(st.session_state.model_mode)
+    if notice:
+        st.warning(notice)
 
     st.divider()
 
@@ -102,20 +106,54 @@ tab_overview, tab_ingest, tab_tasks, tab_detail, tab_profiles, tab_help = st.tab
 
 # ==== Tab: Overview ====
 with tab_overview:
-    st.subheader("Workspace Overview")
-    st.code(str(ws.resolve()), language=None)
+    st.subheader("Material Data Agent")
+    st.caption("材料研发数据处理与证据链复核工具")
+    st.markdown("Traceable data ingestion, structured processing, model-assisted extraction, and evidence-package export for materials R&D.")
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
-        st.metric("Path exists", "Yes" if ws.exists() else "No")
-    with col2:
-        st.metric("agent.sqlite", "Found" if (ws / "agent.sqlite").exists() else "Not found")
-    with col3:
         st.metric("Tasks", summary["task_count"])
+    with col2:
+        st.metric("Runs", summary.get("run_count", 0))
+    with col3:
+        st.metric("Flags", summary.get("flag_count", 0))
+    with col4:
+        st.metric("Reviews", summary.get("review_count", 0))
+    with col5:
+        st.metric("Model Results", summary.get("model_result_count", 0))
 
     if summary.get("status_counts"):
-        st.subheader("Status Distribution")
-        st.json(summary["status_counts"])
+        st.caption("Status: " + ", ".join(f"{k}:{v}" for k, v in summary["status_counts"].items()))
+
+    st.divider()
+
+    st.caption("Workflow: Upload → Ingest → Process → Review → Validate → Export")
+
+    st.divider()
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("""
+**Capabilities**
+- Multi-format data ingest (CSV, images, observation text)
+- Sample-metadata extraction from CSV headers
+- Chart/visual image model-assisted analysis
+- Quality-flag generation and evidence-chain tracking
+- Package validation and export-ready ZIP
+- Version-aware rerun with `replaces`/`replaced_by` relationships
+""")
+    with c2:
+        st.markdown("""
+**Getting Started**
+1. **Ingest** tab: add demo inbox or upload files
+2. **Tasks** tab: review auto-detected tasks
+3. Select a task → **Task Detail** tab
+4. Click **Process** (local mode for zero-network)
+5. Review derived files, flags, model results
+""")
+
+    if summary.get("invalid_record_count", 0) > 0:
+        st.warning(f"Warning: {summary['invalid_record_count']} task(s) have invalid or missing manifests")
 
 
 # ==== Tab: Ingest ====
@@ -243,30 +281,33 @@ with tab_detail:
             with c4:
                 st.metric("Runs / Flags", f"{len(runs)} / {len(flags)}")
 
+            view_mode = st.radio("View", ["Basic", "Advanced"], horizontal=True, key=f"view_{tid}")
+
             # --- Raw Files ---
-            with st.expander("Raw Files", expanded=False):
-                if not raw_files:
-                    st.caption("No raw files")
-                for rf in raw_files:
-                    rpath = Path(rf["path"])
-                    st.text(f"{rf['name']} ({rf['size_bytes']} bytes, {rf['suffix']})")
-                    kind = get_file_kind(rpath)
-                    if kind == "image":
-                        st.image(str(rpath), caption=rf["name"], width=400)
-                    elif kind == "csv":
-                        df = preview_csv_dataframe(rpath)
-                        if df is not None:
-                            st.dataframe(df, use_container_width=True, key=f"raw_{rf['name']}")
-                            st.caption(f"Preview: first {len(df)} rows")
-                        else:
-                            content = preview_csv(rpath) or ""
-                            st.text_area("Content", content, height=200, key=f"raw_{rf['name']}")
-                    elif kind == "text":
-                        content = preview_text(rpath) or ""
-                        st.text_area("Content", content, height=120, key=f"raw_{rf['name']}")
-                    elif kind == "json":
-                        content = preview_json(rpath) or ""
-                        st.code(content[:2000] or "(empty)", language="json")
+            if view_mode == "Advanced":
+                with st.expander("Raw Files", expanded=False):
+                    if not raw_files:
+                        st.caption("No raw files")
+                    for rf in raw_files:
+                        rpath = Path(rf["path"])
+                        st.text(f"{rf['name']} ({rf['size_bytes']} bytes, {rf['suffix']})")
+                        kind = get_file_kind(rpath)
+                        if kind == "image":
+                            st.image(str(rpath), caption=rf["name"], width=400)
+                        elif kind == "csv":
+                            df = preview_csv_dataframe(rpath)
+                            if df is not None:
+                                st.dataframe(df, use_container_width=True, key=f"raw_{rf['name']}")
+                                st.caption(f"Preview: first {len(df)} rows")
+                            else:
+                                content = preview_csv(rpath) or ""
+                                st.text_area("Content", content, height=200, key=f"raw_{rf['name']}")
+                        elif kind == "text":
+                            content = preview_text(rpath) or ""
+                            st.text_area("Content", content, height=120, key=f"raw_{rf['name']}")
+                        elif kind == "json":
+                            content = preview_json(rpath) or ""
+                            st.code(content[:2000] or "(empty)", language="json")
 
             # --- Derived Files ---
             with st.expander("Derived Files", expanded=True):
@@ -358,7 +399,8 @@ with tab_detail:
                         st.text(label)
 
             # --- Processing Runs ---
-            with st.expander("Processing Runs", expanded=False):
+            if view_mode == "Advanced":
+                with st.expander("Processing Runs", expanded=False):
                 if not runs:
                     st.caption("No processing runs")
                 else:
@@ -377,17 +419,19 @@ with tab_detail:
                     st.caption("No quality flags")
                 else:
                     for flag in flags:
-                        requires = flag.get("requires_review", False)
+                        fq = format_quality_flag(flag)
+                        requires = fq["requires_review"]
                         icon = "Review" if requires else "Info"
-                        severity = flag.get("severity", "info")
-                        message = safe_display_text(str(flag.get("message", "")))
+                        severity = fq["severity"]
                         if requires:
-                            st.warning(f"{icon}: {message} (severity={severity}, confidence={flag.get('confidence',0):.2f})")
+                            st.warning(f"{icon}: {fq['message']} (severity={severity}, confidence={fq['confidence']:.2f})")
                         else:
-                            st.info(f"{icon}: {message} (severity={severity}, confidence={flag.get('confidence',0):.2f})")
+                            st.info(f"{icon}: {fq['message']} (severity={severity}, confidence={fq['confidence']:.2f})")
+                        st.caption(f"Suggested: {fq['suggested_action']}  |  Flag ID: {fq['flag_id']}")
 
             # --- Relationships ---
-            with st.expander("Relationships", expanded=False):
+            if view_mode == "Advanced":
+                with st.expander("Relationships", expanded=False):
                 if not rels:
                     st.caption("No relationships")
                 else:
@@ -424,6 +468,9 @@ with tab_detail:
                     key="detail_model_mode",
                     index=["local", "auto", "cloud"].index(st.session_state.model_mode),
                 )
+                notice = cloud_mode_notice(process_mode)
+                if notice:
+                    st.warning(notice)
                 if st.button("Process / Rerun Task", key="btn_process_task"):
                     with st.spinner(f"Processing {tid}..."):
                         result = do_process_task(ws, tid, process_mode)
