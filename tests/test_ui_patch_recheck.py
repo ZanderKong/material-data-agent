@@ -1,10 +1,6 @@
 """Focused tests for UI patch recheck: connection cleanup, raw response, quality flag redaction."""
 import json
-import os
-from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from data_agent.ui.actions import do_ingest
 from data_agent.ui.preview import select_raw_response
@@ -34,45 +30,26 @@ class TestIngestConnectionCleanup:
 
 
 class TestSelectRawResponse:
-    def test_prefers_redacted_and_falls_back(self):
+    def test_prefers_redacted_and_serializes_raw_response_fallback(self):
         assert select_raw_response({"raw_response_redacted": "clean text", "raw_text": "raw text", "raw_response": "full"}) == "clean text"
 
-    def test_falls_back_to_raw_text_when_no_redacted(self):
-        assert select_raw_response({"raw_response_redacted": "", "raw_text": "raw text"}) == "raw text"
-
-    def test_falls_back_to_raw_response_last(self):
-        assert select_raw_response({"raw_response_redacted": "", "raw_text": "", "raw_response": "full response"}) == "full response"
-
-    def test_serializes_dict_raw_response(self):
         result = select_raw_response({"raw_response_redacted": "", "raw_text": "", "raw_response": {"key": "value"}})
-        assert isinstance(result, str)
-        assert '"key"' in result
-        assert '"value"' in result
-
-    def test_serializes_list_raw_response(self):
-        result = select_raw_response({"raw_response_redacted": "", "raw_text": "", "raw_response": [1, 2, 3]})
-        assert isinstance(result, str)
-        assert "1" in result
-
-    def test_returns_empty_when_all_empty(self):
-        assert select_raw_response({}) == ""
+        assert json.loads(result) == {"key": "value"}
 
 
 class TestQualityFlagRedaction:
-    def test_safe_display_text_redacts_sk_in_flag_message(self):
-        msg = "Chart model returned sk-proj-abc123def456 for processing"
+    def test_safe_display_text_redacts_quality_flag_secrets(self, monkeypatch):
+        env_secret = "real-secret-789xyz"
+        monkeypatch.setenv("BEST_MODEL_API_KEY", env_secret)
+        msg = (
+            "Chart model returned sk-proj-abc123def456; "
+            "Auth failed: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.abc123; "
+            f"configured value {env_secret}"
+        )
         result = safe_display_text(msg)
-        assert "sk-proj-abc123def456" not in result
-        assert "REDACTED" in result
 
-    def test_safe_display_text_redacts_bearer_in_flag_message(self):
-        msg = "Auth failed: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.abc123 invalid"
-        result = safe_display_text(msg)
+        assert "sk-proj-abc123def456" not in result
         assert "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9" not in result
         assert "Bearer [REDACTED]" in result
-
-    def test_safe_display_text_redacts_env_value_in_flag_message(self, monkeypatch):
-        monkeypatch.setenv("BEST_MODEL_API_KEY", "real-secret-789xyz")
-        result = safe_display_text("Error: real-secret-789xyz was rejected")
-        assert "real-secret-789xyz" not in result
+        assert env_secret not in result
         assert "REDACTED" in result

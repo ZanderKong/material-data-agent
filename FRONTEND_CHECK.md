@@ -224,12 +224,11 @@ mkdir -p /tmp/material-agent-ui-ws
 ### 新增测试（3 个）
 
 - `test_conn_closed_when_ingest_raises`：mocked ingest 抛异常时 conn 只 close 一次，返回脱敏错误消息
-- `select_raw_response` 系列 6 个 test：验证优先级、dict/list 序列化、全空返回空字符串
-- `safe_display_text` 对 quality flag 消息脱敏 3 个 test：sk-* token、Bearer header、env 真实值
+- `test_prefers_redacted_and_serializes_raw_response_fallback`：验证 redacted 响应优先，并在回退到 dict `raw_response` 时返回格式化 JSON
+- `test_safe_display_text_redacts_quality_flag_secrets`：验证 Quality Flag 文案中的 sk-* token、Bearer header、env 真实值均被脱敏
 
 ### 验收结果
 
-- **pytest**: 190 passed in 7.24s
+- **pytest**: 183 passed in 7.08s
 - **compileall**: clean（无错误输出）
-- **全量测试**：新增 10 个 test，原有 180 个全部通过
-
+- **全量测试**：新增 3 个 focused tests；原有 180 个测试全部通过
