@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 
 REPO = Path(__file__).resolve().parents[1]
-PYTHON = REPO / ".venv" / "bin" / "python"
+PYTHON = Path(sys.executable)
 
 
 def _clean_provider_env() -> dict[str, str]:
