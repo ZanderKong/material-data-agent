@@ -117,12 +117,13 @@ def preview_model_result(path: Path) -> dict[str, Any] | None:
         "token_usage": data.get("token_usage", {}),
         "schema_version": data.get("schema_version", ""),
         "prompt_version": data.get("prompt_version", ""),
+        "input_metadata": data.get("input_metadata", {}),
     }
 
     risk = {
         "warnings": data.get("warnings", []),
         "error": data.get("error", ""),
-        "requires_review": output.get("requires_review", False),
+        "requires_review": data.get("requires_review", output.get("requires_review", False)),
         "ocr_unavailable": output.get("ocr_unavailable", False),
         "vision_unavailable": output.get("vision_unavailable", False),
     }

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -21,6 +21,23 @@ class ModelProfile(BaseModel):
     cost_tier: str = "medium"
     supports_vision: bool = False
     supports_json: bool = True
+    endpoint_path: str = "/chat/completions"
+    input_modalities: list[str] = Field(default_factory=lambda: ["text"])
+    json_mode: Literal["required", "preferred", "disabled"] = "preferred"
+    image_detail: Literal["auto", "low", "high"] = "high"
+    max_output_tokens: int = 2048
+    thinking_mode: Literal["enabled", "disabled", "provider_default"] = "provider_default"
+
+    def effective_input_modalities(self) -> list[str]:
+        modalities = list(self.input_modalities)
+        if self.supports_vision and "image" not in modalities:
+            modalities.append("image")
+        return modalities
+
+    def effective_json_mode(self) -> Literal["required", "preferred", "disabled"]:
+        if not self.supports_json:
+            return "disabled"
+        return self.json_mode
 
 
 class TaskContext(BaseModel):
@@ -58,3 +75,12 @@ class ModelResult(BaseModel):
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     schema_version: str = "model_result_v1"
     prompt_version: str = ""
+    requires_review: bool = False
+    input_metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ModelExecution(BaseModel):
+    """Auditable result of one routed role, including failed cloud attempts."""
+
+    attempts: list[ModelResult] = Field(default_factory=list)
+    selected_result: ModelResult

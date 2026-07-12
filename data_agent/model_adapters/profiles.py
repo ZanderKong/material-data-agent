@@ -12,7 +12,7 @@ from .base import ModelProfile
 
 def load_profiles(config_path: Optional[Path] = None) -> dict[str, ModelProfile]:
     if config_path is None:
-        config_path = Path("model_profiles.yaml")
+        config_path = Path(os.environ.get("DATA_AGENT_MODEL_PROFILES", "model_profiles.yaml"))
     if not config_path.exists():
         return {}
     with open(config_path, "r", encoding="utf-8") as f:

@@ -31,7 +31,7 @@ from .processors.chart_image import process_chart_image
 from .processors.observation_text import process_observation_text
 from .processors.visual_image import process_visual_image
 from .processors.metadata import process_metadata
-from .model_adapters.base import TaskContext, ModelResult
+from .model_adapters.base import TaskContext, ModelExecution, ModelResult
 from .model_adapters.router import route_model_calls, get_fallback_chain
 from .model_adapters.profiles import load_profiles, resolve_profile_env, is_profile_available
 from .model_adapters.stubs import STUB_REGISTRY
@@ -142,6 +142,36 @@ def _get_profiles() -> dict:
     return load_profiles()
 
 
+_MAX_OBSERVATION_BYTES = 1024 * 1024
+_MAX_OBSERVATION_CHARS = 20_000
+
+
+def _read_observation_input(path: Path) -> tuple[str, dict, list[str], str]:
+    """Read bounded UTF-8 observation text without leaking the local path."""
+    try:
+        size = path.stat().st_size
+        if size <= 0:
+            return "", {"original_bytes": size, "sent_characters": 0}, [], "Observation text input is empty"
+        with open(path, "rb") as f:
+            raw = f.read(_MAX_OBSERVATION_BYTES + 1)
+        byte_truncated = len(raw) > _MAX_OBSERVATION_BYTES
+        raw = raw[:_MAX_OBSERVATION_BYTES]
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return "", {"original_bytes": 0, "sent_characters": 0}, [], "Observation text is not valid UTF-8"
+    except OSError as exc:
+        return "", {"original_bytes": 0, "sent_characters": 0}, [], f"Cannot read observation text: {exc.__class__.__name__}"
+    char_truncated = len(text) > _MAX_OBSERVATION_CHARS
+    text = text[:_MAX_OBSERVATION_CHARS]
+    truncated = byte_truncated or char_truncated or size > len(raw)
+    warnings = ["input_truncated"] if truncated else []
+    return text, {
+        "original_bytes": size,
+        "sent_characters": len(text),
+        "truncated": truncated,
+    }, warnings, ""
+
+
 def _call_model_roles(
     task_dir: Path,
     conn,
@@ -178,103 +208,94 @@ def _call_model_roles(
 
     profiles = _get_profiles()
     image_path_arg = str(file_path) if has_image and file_path.exists() else ""
+    text_input = ""
+    input_metadata: dict = {}
+    input_warnings: list[str] = []
+    input_error = ""
+    if has_text:
+        text_input, input_metadata, input_warnings, input_error = _read_observation_input(file_path)
 
     for role in roles:
-        result = _execute_model_role(role, profiles, ctx, image_path_arg)
-        if result is None:
+        if input_error:
+            failed = ModelResult(
+                success=False, role=role, provider="none", mode=model_mode,
+                error=input_error, requires_review=True, input_metadata=input_metadata,
+            )
+            execution = ModelExecution(attempts=[failed], selected_result=failed)
+        else:
+            execution = _execute_model_role(role, profiles, ctx, image_path_arg, text_input)
+        if execution is None:
             continue
+        attempts = execution.attempts or [execution.selected_result]
+        for attempt_index, result in enumerate(attempts):
+            result.input_metadata.update(input_metadata)
+            for warning in input_warnings:
+                if warning not in result.warnings:
+                    result.warnings.append(warning)
+            if input_warnings:
+                result.requires_review = True
 
-        prefix = f"run_{run_short}__" if run_short else ""
-        output_name = f"{prefix}model_result_{role}.json"
-        output_path = task_dir / "derived" / output_name
+            selected = attempt_index == len(attempts) - 1
+            result_key = role if selected else f"{role}_cloud_attempt"
+            prefix = f"run_{run_short}__" if run_short else ""
+            output_name = f"{prefix}model_result_{result_key}.json"
+            output_path = task_dir / "derived" / output_name
+            result_dict = sanitize_and_redact_model_result(result.model_dump(mode="json"))
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(result_dict, f, ensure_ascii=False, indent=2)
 
-        result_dict = result.model_dump(mode="json")
-        result_dict = sanitize_and_redact_model_result(result_dict)
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(result_dict, f, ensure_ascii=False, indent=2)
-
-        model_derived = DataObject(
-            task_id=tid,
-            data_type=DataType.MODEL_RESULT,
-            subtype=f"model_result_{role}",
-            confidence=result.confidence,
-            derived_from=[l1_obj.object_id],
-            lifecycle=LifecycleLevel.L2,
-            data_schema={
-                "output_file": output_name,
-                "role": role,
-                "provider": result.provider,
-                "model": result.model,
-                "mode": result.mode,
-                "fallback_used": result.fallback_used,
-                "prompt_version": result.prompt_version,
-            },
-        )
-        derived_objects.append(model_derived)
-
-        model_run = ProcessingRun(
-            task_id=tid,
-            tool_name=f"model:{role}",
-            tool_version="0.1.0",
-            input_data_ids=[l1_obj.object_id],
-            output_data_ids=[model_derived.object_id],
-            parameters={
-                "provider": result.provider,
-                "model": result.model,
-                "role": role,
-                "mode": result.mode,
-                "fallback_used": result.fallback_used,
-            },
-            status=ProcessingStatus.SUCCEEDED if result.success else ProcessingStatus.FAILED,
-            warnings=result.warnings,
-            errors=[result.error] if result.error else [],
-        )
-        model_runs.append(model_run)
-
-        if result.fallback_used:
-            flags.append(QualityFlag(
-                task_id=tid,
-                severity="warning",
-                target_type="model_result",
-                target_id=model_derived.object_id,
-                message=f"fallback_used: Model role '{role}' used fallback from '{result.fallback_from}'.",
-                evidence=str(result.warnings),
-                requires_review=False,
-                confidence=result.confidence,
+            model_derived = DataObject(
+                task_id=tid, data_type=DataType.MODEL_RESULT,
+                subtype=f"model_result_{result_key}", confidence=result.confidence,
+                derived_from=[l1_obj.object_id], lifecycle=LifecycleLevel.L2,
+                data_schema={
+                    "output_file": output_name, "role": role, "provider": result.provider,
+                    "model": result.model, "mode": result.mode,
+                    "fallback_used": result.fallback_used, "prompt_version": result.prompt_version,
+                    "attempt_kind": "selected" if selected else "cloud_attempt",
+                },
+            )
+            derived_objects.append(model_derived)
+            model_runs.append(ProcessingRun(
+                task_id=tid, tool_name=f"model:{role}", tool_version="0.2.0",
+                input_data_ids=[l1_obj.object_id], output_data_ids=[model_derived.object_id],
+                parameters={
+                    "provider": result.provider, "model": result.model, "role": role,
+                    "mode": result.mode, "fallback_used": result.fallback_used,
+                    "attempt_kind": "selected" if selected else "cloud_attempt",
+                },
+                status=ProcessingStatus.SUCCEEDED if result.success else ProcessingStatus.FAILED,
+                warnings=result.warnings, errors=[result.error] if result.error else [],
             ))
-        if not result.success:
-            flags.append(QualityFlag(
-                task_id=tid,
-                severity="warning",
-                target_type="model_result",
-                target_id=model_derived.object_id,
-                message=f"model_unavailable: {role} returned error: {result.error}",
-                evidence=str(result.error),
-                requires_review=False,
-                confidence=0.0,
-            ))
-        if result.confidence < 0.5:
-            flags.append(QualityFlag(
-                task_id=tid,
-                severity="info",
-                target_type="model_result",
-                target_id=model_derived.object_id,
-                message=f"low_confidence_model_output: {role} confidence={result.confidence}.",
-                evidence=str(result.output_json),
-                requires_review=True,
-                confidence=result.confidence,
-            ))
-        for w in result.warnings:
-            if w == "model_output_excluded_from_conclusion":
+
+            if result.fallback_used:
                 flags.append(QualityFlag(
-                    task_id=tid,
-                    severity="warning",
-                    target_type="model_result",
+                    task_id=tid, severity="warning", target_type="model_result",
                     target_id=model_derived.object_id,
-                    message="model_output_excluded_from_conclusion: Forbidden output keys removed.",
-                    requires_review=True,
-                    confidence=0.5,
+                    message=f"fallback_used: Model role '{role}' used fallback from '{result.fallback_from}'.",
+                    evidence=str(result.warnings), requires_review=True, confidence=result.confidence,
                 ))
+            if not result.success:
+                flags.append(QualityFlag(
+                    task_id=tid, severity="warning", target_type="model_result",
+                    target_id=model_derived.object_id,
+                    message=f"model_unavailable: {role} returned error: {result.error}",
+                    evidence=str(result.error), requires_review=True, confidence=0.0,
+                ))
+            if result.confidence < 0.5:
+                flags.append(QualityFlag(
+                    task_id=tid, severity="info", target_type="model_result",
+                    target_id=model_derived.object_id,
+                    message=f"low_confidence_model_output: {role} confidence={result.confidence}.",
+                    evidence=str(result.output_json), requires_review=True, confidence=result.confidence,
+                ))
+            for warning in result.warnings:
+                if warning in {"model_output_excluded_from_conclusion", "model_output_truncated", "input_truncated"}:
+                    flags.append(QualityFlag(
+                        task_id=tid, severity="warning", target_type="model_result",
+                        target_id=model_derived.object_id, message=f"{warning}: Model result requires review.",
+                        requires_review=True, confidence=result.confidence,
+                    ))
 
     return derived_objects, model_runs, flags
 
@@ -284,17 +305,20 @@ def _execute_model_role(
     profiles: dict,
     ctx: TaskContext,
     image_path: str = "",
-) -> ModelResult | None:
+    text_input: str = "",
+) -> ModelExecution | None:
     if ctx.model_mode == "local":
         stub_func = STUB_REGISTRY.get(role) or STUB_REGISTRY.get("local_stub")
         if stub_func:
-            return stub_func(ctx)
+            result = stub_func(ctx)
+            return ModelExecution(attempts=[result], selected_result=result)
         return None
 
     if ctx.model_mode == "cloud":
         if role in profiles and is_profile_available(profiles[role]):
             env = resolve_profile_env(profiles[role])
-            return call_openai_compatible(profiles[role], ctx, env, image_path)
+            result = call_openai_compatible(profiles[role], ctx, env, image_path, text_input)
+            return ModelExecution(attempts=[result], selected_result=result)
         result = ModelResult(
             success=False,
             role=role,
@@ -303,26 +327,28 @@ def _execute_model_role(
             error=f"Model profile '{role}' not configured or unavailable.",
             fallback_used=False,
         )
-        return result
+        return ModelExecution(attempts=[result], selected_result=result)
 
     if ctx.model_mode == "auto":
         if role in profiles and is_profile_available(profiles[role]):
             env = resolve_profile_env(profiles[role])
-            result = call_openai_compatible(profiles[role], ctx, env, image_path)
+            result = call_openai_compatible(profiles[role], ctx, env, image_path, text_input)
             if result.success:
-                return result
+                return ModelExecution(attempts=[result], selected_result=result)
             fallback_chain = get_fallback_chain(role, profiles)
-            fallback_result = result
-            fallback_result.fallback_used = True
-            fallback_result.fallback_from = role
             for fallback_role in fallback_chain:
                 stub_func = STUB_REGISTRY.get(fallback_role)
                 if stub_func:
                     fb = stub_func(ctx)
-                    fb.fallback_from = role
+                    fb.fallback_from = f"{profiles[role].provider}:{profiles[role].name}"
                     fb.fallback_used = True
-                    return fb
-            return fallback_result
+                    return ModelExecution(attempts=[result, fb], selected_result=fb)
+            return ModelExecution(attempts=[result], selected_result=result)
+        unavailable = ModelResult(
+            success=False, role=role, provider="none", mode="auto",
+            error=f"Model profile '{role}' not configured or unavailable.",
+            requires_review=True,
+        )
         fallback_chain = get_fallback_chain(role, profiles)
         for fallback_role in fallback_chain:
             stub_func = STUB_REGISTRY.get(fallback_role)
@@ -330,7 +356,7 @@ def _execute_model_role(
                 result = stub_func(ctx)
                 result.fallback_from = role
                 result.fallback_used = True
-                return result
+                return ModelExecution(attempts=[unavailable, result], selected_result=result)
         return None
 
     return None

@@ -21,6 +21,9 @@ CHART_IMAGE_OCR_PROMPT = """Analyze this chart image and extract:
 - legend_text
 - visible_series_count
 - text_blocks (all visible text)
+- axis_candidates (list of axis label candidates)
+- unreadable_regions (list of ambiguous or unreadable areas)
+- uncertainties (list of ambiguity descriptions)
 - requires_review (true if any text is ambiguous)
 - confidence (0.0-1.0)
 
@@ -71,12 +74,13 @@ OBSERVATION_TEXT_SYSTEM = SYSTEM_BOUNDARY + (
 
 OBSERVATION_TEXT_PROMPT = """Analyze this observation text and extract:
 - factual_observations (list of observed facts)
-- trend_or_statements (trend-like descriptions)
+- trend_statements (trend-like descriptions)
 - interpretation_candidates (phrases suggesting speculation, with uncertainty markers like "可能", "或许", "大概")
 - operator_notes
 - sample_ids
 - time_expressions
 - phenomenon_types
+- uncertainties (list of ambiguity descriptions)
 - requires_review
 - confidence (0.0-1.0)
 

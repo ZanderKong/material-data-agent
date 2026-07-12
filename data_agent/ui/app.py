@@ -361,6 +361,8 @@ with tab_detail:
                                             st.caption(f"Token usage: {audit['token_usage']}")
                                         if audit.get("schema_version"):
                                             st.caption(f"Schema: {audit['schema_version']}  |  Prompt: {audit['prompt_version']}")
+                                        if audit.get("input_metadata"):
+                                            st.caption(f"Input metadata: {audit['input_metadata']}")
 
                                     with st.expander("Risk", expanded=False):
                                         if risk.get("error"):
