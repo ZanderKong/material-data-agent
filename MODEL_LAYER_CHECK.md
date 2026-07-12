@@ -1,5 +1,7 @@
 # Model Layer Check
 
+> Historical checkpoint. This report records the state at its original commit/date and is not the current release status. See `CURRENT_RELEASE_STATUS.md` for the latest verified state.
+
 ## 当前验收状态
 
 ### 模型层历史 checkpoint（2026-07-09）

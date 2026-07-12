@@ -1,48 +1,19 @@
 # Real API Check
 
-**Status: NOT RUN**
+**Status: PARTIAL**
 
-This document records the status of real API verification. Core functionality (local mode, validation, export, sample index) is complete and tested. Real API verification requires user-provided API keys and is a separate manual gate.
+Engineering support for the three providers is implemented and verified offline. Real paid
+calls were not run because rotated credentials are not configured. No credential from
+conversation history was used.
 
-## Required Steps
+| Scenario | Date | Commit | Provider | Model | Status | Command | Evidence |
+|---|---|---|---|---|---|---|---|
+| DeepSeek Text | 2026-07-13 | working tree based on `135c98c` | DeepSeek | `deepseek-v4-pro` | NOT RUN | `python scripts/run_real_api_check.py --scenario deepseek-text` | Rotated environment variables missing |
+| Volcengine Vision | 2026-07-13 | working tree based on `135c98c` | Volcengine Ark | local endpoint ID | NOT RUN | `python scripts/run_real_api_check.py --scenario volcengine-vision` | Rotated environment variables missing |
+| SiliconFlow OCR | 2026-07-13 | working tree based on `135c98c` | SiliconFlow | `PaddlePaddle/PaddleOCR-VL-1.5` | NOT RUN | `python scripts/run_real_api_check.py --scenario siliconflow-ocr` | Rotated environment variables missing |
+| Auto Fallback | 2026-07-13 | working tree based on `135c98c` | deterministic failure → local fallback | synthetic | PASS | `python scripts/run_real_api_check.py --scenario auto-fallback` | task `task_0001`; selected run `fc7abe5c-535c-4197-b22b-2bae8fc45b0e`; result `tasks/task_0001/derived/run_73ad7d87__model_result_fast.json`; latency 0 ms; token usage unavailable; fallback/review flags present; validation WARN; export PASS |
+| Key Safety Audit | 2026-07-13 | working tree based on `135c98c` | all providers | - | PARTIAL | `python scripts/audit_secret_leaks.py --repo .` | scanner PASS; real-value scan remains NOT RUN |
 
-1. Configure `model_profiles.yaml` with valid provider entries.
-2. Set environment variables for API keys (see `docs/real_api_check_template.md` for safe shell commands).
-3. Run the three scenarios documented in `docs/real_api_check_template.md`.
-4. Perform the key-safety audit after each scenario.
-5. Record results below.
-
-## Text Call Results
-
-| Date | Provider | Model | Role | Status | Task ID | Model Result Path | Run ID | Flags |
-|------|----------|-------|------|--------|---------|-------------------|--------|-------|
-| *NOT RUN* | - | - | fast/text | - | - | - | - | - |
-
-## Vision/OCR Call Results
-
-| Date | Provider | Model | Role | Status | Task ID | Model Result Path | Run ID | Flags |
-|------|----------|-------|------|--------|---------|-------------------|--------|-------|
-| *NOT RUN* | - | - | vision/ocr | - | - | - | - | - |
-
-## Auto Fallback Results
-
-| Date | Provider | Model | Role | Status | Task ID | Model Result Path | Run ID | Flags |
-|------|----------|-------|------|--------|---------|-------------------|--------|-------|
-| *NOT RUN* | - | - | vision/ocr (auto) | - | - | - | - | - |
-
-## Key Safety Audit
-
-**Result: NOT RUN**
-
-## Completion Criteria
-
-- [ ] At least one text real call succeeded
-- [ ] At least one vision/OCR call succeeded, or provider failure + verified auto fallback documented as PARTIAL
-- [ ] No key matches found in workspace files, SQLite, or exported ZIP
-- [ ] No key stored in git or documentation
-
-## Notes
-
-- If no API keys are available, this document remains NOT RUN. Core completion is not blocked.
-- Any secret leak blocks all completion claims.
-- The `docs/real_api_check_template.md` contains detailed setup and scenario instructions.
+This file may be changed to `PASS` only after all real-provider scenarios succeed, their
+packages validate and export, and the exact-value audit passes. Never record keys, headers,
+raw request bodies, base64 images, or full raw responses here.

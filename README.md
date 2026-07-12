@@ -1,281 +1,262 @@
-# Material R&D Data Processing Agent MVP
+# Material R&D Data Processing Agent
 
-本地材料研发数据处理 Agent，接收 demo 数据，生成可追溯 evidence package。
+面向材料研发数据整理、证据链复核与交付的本地优先数据处理 Agent。系统将分散的 CSV、光谱数据、图表截图、表面图像和实验观察文本组织为可追溯的 evidence package，并提供版本化处理、人工复核、完整性验证和安全导出。
 
-## 环境要求
+> 模型输出仅用于辅助提取可见事实、元数据和不确定性，不构成科研结论、机理解释或实验建议。
 
-- Python >= 3.10
+## 项目概览
 
-## 安装
+材料研发数据通常同时包含结构化表格、仪器导出、图片和自然语言记录。仅生成处理结果并不足以支持后续复核：还需要知道输入来自哪里、使用了什么处理步骤、哪些结果被替代、哪些内容需要人工确认，以及交付包是否完整。
 
-```bash
-python3.10 -m venv .venv
-.venv/bin/python -m pip install -e '.[dev]'
+本项目围绕这条证据链实现完整工作流：
+
+```text
+Upload → Ingest → Process → Review → Validate → Export
 ```
 
-## 当前验收状态
+核心能力：
 
-- **基础 demo 闭环**：ingest → process → review → info
-- **Model Service Layer 已实现**：可配置模型角色、路由、fallback
-- **Streamlit Local UI 已实现**：6-tab 前端，支持 ingest/upload/process/review/查看
-- **pytest**：242 passed, 52 skipped（2026-07-11 Release Candidate；demo 集成测试需 DATA_AGENT_DEMO_INBOX 环境变量）
-- **L2 版本化输出**：已实现（run 前缀）
-- **Rerun replaces/replaced_by**：已实现
-- **Marimo 复核命令**：可生成
-- **Package Validation**：已实现（CLI `validate --task/--all` + UI Validate Package 按钮）
-- **Package Export**：已实现（CLI `export --task` + UI Export Review Package 下载）
-- **Sample Index**：已实现（CLI `index-samples` + UI Sample View tab）
-- **FRONTEND_CHECK.md**：前端验收记录
-- **MODEL_LAYER_CHECK.md**：模型服务层验收记录（历史 checkpoint: 2026-07-09, 112 passed）
-- **docs/ui_walkthrough.md**：UI 操作 walkthrough
+- 多类型研发数据识别与统一任务登记
+- L0–L3 生命周期管理和不可变原始数据归档
+- 每次运行生成独立 L2 结果，重跑不覆盖历史产物
+- `derived_from`、`replaces`、`replaced_by` 关系追踪
+- local / cloud / auto 三种模型模式和可审计 fallback
+- SQLite 注册表与任务目录 evidence package 双重记录
+- Streamlit 操作界面与 Marimo 复核工作台
+- package validation、安全 ZIP 导出和样品级索引
+- API key、异常信息、模型原始响应和 UI 展示统一脱敏
 
-## 数据输入规范
+## 系统架构
 
-提交数据前请阅读 [Data Input Contract](docs/data_input_contract.md)，了解推荐的 CSV 格式、图像要求和观测文本规范，以提升自动提取准确率。
+```mermaid
+flowchart LR
+    A["CSV / Spectra / Images / Notes"] --> B["Ingest & Classification"]
+    B --> C["L1 Immutable Raw Archive"]
+    C --> D["Typed Processors"]
+    C --> E["Model Router"]
+    E --> F["Local Rules / Stub"]
+    E --> G["Configured Cloud Providers"]
+    D --> H["Versioned L2 Evidence"]
+    F --> H
+    G --> H
+    H --> I["Review & Quality Flags"]
+    I --> J["Package Validation"]
+    J --> K["Safe Review ZIP"]
+    B --> L["SQLite Registry"]
+    H --> L
+    I --> L
+```
+
+任务目录保留可移植的文件证据，SQLite 负责跨任务查询和关系审计：
+
+```text
+task_XXXX/
+├── raw/                 # L1 原始归档副本
+├── derived/             # 带 run 前缀的 L2 结果
+├── logs/                # runs、flags、relationships、validation
+├── reviews/             # 人工复核记录
+└── manifest.json        # package 索引
+```
+
+## 数据与审计模型
+
+### 生命周期
+
+| 层级 | 含义 | 约束 |
+|---|---|---|
+| L0 | 外部输入登记 | 记录来源和 checksum |
+| L1 | 工作区原始归档 | 不修改、不覆盖 |
+| L2 | 派生结果 | 每次运行创建新文件和对象 |
+| L3 | 废弃、失败或被替代状态 | 保留历史，不物理删除证据 |
+
+### 模型调用
+
+| 数据类型 | local | cloud / auto |
+|---|---|---|
+| 样品元数据、数值、原始光谱 | 本地确定性处理 | 本地确定性处理 |
+| 图表截图 | local stub | OCR + Vision |
+| 表面图像 | local vision stub | Vision + OCR |
+| 观察文本 | 本地规则结果 | Text extraction |
+
+`cloud` 记录云端调用的真实成功或失败；`auto` 在云端失败时执行本地 fallback，并分别保留云端失败 attempt 和最终 fallback evidence。失败记录不会被 fallback 覆盖或伪装为云端成功。
+
+当前 provider profile 模板对应：
+
+- DeepSeek `deepseek-v4-pro`：观察文本结构化提取
+- 火山引擎方舟视觉 endpoint：图表和表面图像观察
+- SiliconFlow `PaddlePaddle/PaddleOCR-VL-1.5`：图片文字提取
+
+真实 provider 验证状态以 [CURRENT_RELEASE_STATUS.md](CURRENT_RELEASE_STATUS.md) 和 [REAL_API_CHECK.md](REAL_API_CHECK.md) 为准。没有真实调用证据时统一标记为 `NOT RUN`。
 
 ## 快速开始
 
-```bash
-# 查看命令
-.venv/bin/python -m data_agent --help
+### 环境
 
-# 初始化 ingest
-DATA_AGENT_DEMO_INBOX=/path/to/demo-inbox
+- Python 3.10+
+- macOS、Linux，或支持 Python/SQLite 的等价环境
+
+```bash
+python3.11 -m venv .venv
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install -e '.[dev]'
+```
+
+### 本地工作流
+
+```bash
+export DATA_AGENT_DEMO_INBOX=/path/to/demo-inbox
+export WORKSPACE=/tmp/material-agent-workspace
+
 .venv/bin/python -m data_agent ingest \
   --inbox "$DATA_AGENT_DEMO_INBOX" \
-  --workspace work/check-ws
+  --workspace "$WORKSPACE"
 
-# 处理全部任务
 .venv/bin/python -m data_agent process \
-  --workspace work/check-ws \
+  --workspace "$WORKSPACE" \
   --all \
   --models local
 
-# 查看任务信息
-.venv/bin/python -m data_agent info --workspace work/check-ws
+.venv/bin/python -m data_agent info --workspace "$WORKSPACE"
 
-# 审核任务
 .venv/bin/python -m data_agent review \
-  --workspace work/check-ws \
+  --workspace "$WORKSPACE" \
   --task task_0001 \
   --action approve \
-  --reviewer ZQ \
-  --comment "demo approval"
+  --reviewer reviewer-id \
+  --comment "Reviewed against source evidence"
 
-# 打开 marimo 复核工作台
-.venv/bin/python -m data_agent open \
-  --workspace work/check-ws \
+.venv/bin/python -m data_agent validate \
+  --workspace "$WORKSPACE" \
+  --all
+
+.venv/bin/python -m data_agent export \
+  --workspace "$WORKSPACE" \
   --task task_0001
-
-# 重跑任务（验证 L2 版本化）
-.venv/bin/python -m data_agent process \
-  --workspace work/check-ws \
-  --task task_0007 \
-  --models local
 ```
 
-## 运行测试
+输入文件命名、CSV 字段和图片要求见 [Data Input Contract](docs/data_input_contract.md)。
+
+## 本地 UI 与复核工具
+
+启动七个 tab 的 Streamlit 界面：
 
 ```bash
-.venv/bin/python -m pytest -q
+.venv/bin/python -m data_agent ui --workspace "$WORKSPACE"
 ```
 
-## 完整验收命令
+界面包括：
+
+- Overview：任务、run、flag、review 和 model-result 汇总
+- Ingest：目录导入与文件上传
+- Tasks：任务筛选和状态查看
+- Task Detail：Basic / Advanced evidence 视图、处理、复核、验证与导出
+- Sample View：样品与任务的保守关联索引
+- Model Profiles：仅显示配置状态，不显示密钥值
+- Help：工作流、数据契约和复核入口
+
+生成 Marimo 复核命令：
 
 ```bash
-rm -rf work/check-ws
-
-.venv/bin/python -m pytest -q
-
-DATA_AGENT_DEMO_INBOX=/path/to/demo-inbox
-.venv/bin/python -m data_agent ingest \
-  --inbox "$DATA_AGENT_DEMO_INBOX" \
-  --workspace work/check-ws
-
-.venv/bin/python -m data_agent process \
-  --workspace work/check-ws \
-  --all \
-  --models local
-
-.venv/bin/python -m data_agent review \
-  --workspace work/check-ws \
+.venv/bin/python -m data_agent open \
+  --workspace "$WORKSPACE" \
   --task task_0001 \
-  --action approve \
-  --reviewer ZQ \
-  --comment "demo approval"
-
-.venv/bin/python -m data_agent info --workspace work/check-ws
-
-sqlite3 work/check-ws/agent.sqlite '
-select "tasks", count(*) from tasks
-union all select "files", count(*) from files
-union all select "data_objects", count(*) from data_objects
-union all select "processing_runs", count(*) from processing_runs
-union all select "quality_flags", count(*) from quality_flags
-union all select "relationships", count(*) from relationships
-union all select "reviews", count(*) from reviews;
-'
+  --print-command
 ```
 
-## Local UI
+完整操作流程见 [UI Walkthrough](docs/ui_walkthrough.md)。
 
-项目提供 Streamlit 本地 Web UI，可替代 CLI 进行日常操作。
+## 云端模型配置
 
-### 启动 UI
+云端模型是可选增强；local 模式不依赖网络或 API key。
 
-```bash
-# 推荐：CLI 快捷命令
-.venv/bin/python -m data_agent ui --workspace /tmp/material-agent-ui-ws
-
-# 打印命令（不启动）
-.venv/bin/python -m data_agent ui --workspace /tmp/material-agent-ui-ws --print-command
-
-# 直接使用 Streamlit
-.venv/bin/python -m streamlit run data_agent/ui/app.py
-```
-
-### Demo workspace 验收命令
-
-```bash
-# 准备工作区
-rm -rf /tmp/material-agent-ui-ws
-mkdir -p /tmp/material-agent-ui-ws
-
-# CLI ingest
-.venv/bin/python -m data_agent ingest \
-  --inbox "$DEMO_INBOX" \
-  --workspace /tmp/material-agent-ui-ws
-
-# CLI process (local mode)
-.venv/bin/python -m data_agent process \
-  --workspace /tmp/material-agent-ui-ws \
-  --all --models local
-
-# 启动 UI
-.venv/bin/python -m data_agent ui \
-  --workspace /tmp/material-agent-ui-ws
-```
-
-### UI 功能
-
-- **workspace 输入**：选择或输入本地路径，支持 `DATA_AGENT_UI_WORKSPACE` 环境变量预设
-- **ingest / upload**：从 inbox 目录或直接上传文件
-- **task 列表**：按 display_status 筛选和排序，进入 workspace 后自动加载
-- **task detail**：查看 raw/derived/runs/flags/relationships/reviews
-  - raw CSV 预览前 50 行（表格形式）
-  - model_result 分区展示（Audit / Risk / Extracted Output / Raw Response）
-- **review**：支持 target type（task / quality_flag / data_object / derived_file），可选 target id
-- **model profiles**：查看配置状态（不泄露 API key）
-- **marimo command**：查看 marimo 复核工作台启动命令
-- **错误脱敏**：所有 UI 错误提示经过安全脱敏，不泄露 API key、Bearer token 或环境变量值
-
-### UI 模式
-
-UI 中可选择 `local` / `auto` / `cloud` 模式，行为与 CLI 一致：
-- `local`：零网络调用
-- `auto`：优先云端、自动降级
-- `cloud`：仅云端
-
-### 相关文档
-
-- `FRONTEND_CHECK.md`：前端验收记录
-- `MODEL_LAYER_CHECK.md`：模型服务层验收记录
-- `docs/ui_walkthrough.md`：UI 操作 walkthrough
-- `docs/data_input_contract.md`：数据输入规范
-- `REAL_API_CHECK.md`：真实 API 验证记录（需用户提供 API key）
-
-## 项目结构
-
-```
-data_agent/
-  ui/                # Streamlit 前端
-  schemas.py         # Pydantic 数据模型
-  db.py              # SQLite 注册系统
-  package.py         # Evidence package 读写
-  classify.py        # 文件类型识别
-  ingest.py          # 输入文件注册
-  process.py         # 统一处理编排
-  reviews.py         # 审核记录
-  reports.py         # 处理报告生成
-  processors/        # 各类型数据处理
-  model_adapters/    # 模型适配器 (本地/云端)
-marimo_apps/         # Marimo 复核工作台
-tests/               # 测试
-```
-
-## 生命周期模型
-
-- **L0**: 原始文件登记（inbox 源路径记录）
-- **L1**: 不可变归档副本（raw/ 下文件）
-- **L2**: 派生处理结果（derived/ 下带 run 前缀文件）
-- **L3**: 废弃/失败/替代状态（标记，不删除）
-
-## Model Service Layer
-
-### 配置模型服务
-
-1. 复制模板文件：
 ```bash
 cp .env.example .env
 cp model_profiles.yaml.example model_profiles.yaml
 ```
 
-2. 编辑 `.env`，填入真实的 API 地址和密钥（**切勿提交到仓库**）：
-```bash
-BEST_MODEL_BASE_URL=https://api.openai.com/v1
-BEST_MODEL_API_KEY=sk-xxxxxxxx
-BEST_MODEL_NAME=gpt-4
-# ... 其他模型类似
-```
-
-3. 检查模型配置状态：
-```bash
-python3 -m data_agent models check --workspace work/check-ws
-python3 -m data_agent models check --workspace work/check-ws --verbose
-```
-
-### 三种模型模式
-
-| 模式 | 说明 |
-|------|------|
-| `local` | 仅使用本地规则和 stub，不发起任何网络请求（默认） |
-| `cloud` | 尝试调用已配置的云端模型，失败时记录错误但不崩溃 |
-| `auto` | 优先使用云端模型，自动降级至本地 stub（推荐生产环境） |
+`.env` 和 `model_profiles.yaml` 已被 Git 忽略。真实密钥只应通过本机环境变量或本地 secret manager 提供，不能写入源码、测试、报告、SQLite、截图或提交记录。
 
 ```bash
-python3 -m data_agent process --workspace work/check-ws --all --models local
-python3 -m data_agent process --workspace work/check-ws --all --models cloud
-python3 -m data_agent process --workspace work/check-ws --all --models auto
+set -a
+source .env
+set +a
+
+.venv/bin/python -m data_agent models check --verbose
 ```
 
-### 模型角色与路由
+执行合成输入的 provider smoke test：
 
-| 数据类型 | local 模式 | cloud/auto 模式 |
-|----------|-----------|-----------------|
-| 样品元数据 | 无模型 | 无模型 |
-| 原始数值 | 无模型 | 无模型 |
-| 原始光谱 | 无模型 | 无模型 |
-| 图表截图 | local_stub | OCR + Vision |
-| 表面照片 | local_vision_stub | Vision + OCR |
-| 观测文本 | 无模型 | Fast |
-| 结构化观测 | 无模型 | 无模型 |
+```bash
+.venv/bin/python scripts/run_real_api_check.py --scenario deepseek-text
+.venv/bin/python scripts/run_real_api_check.py --scenario volcengine-vision
+.venv/bin/python scripts/run_real_api_check.py --scenario siliconflow-ocr
+.venv/bin/python scripts/run_real_api_check.py --scenario auto-fallback
+```
 
-### 无密钥降级
+Runner 不接受命令行 key 参数；缺少环境变量时安全返回 `SKIPPED`。安全操作说明见 [Real API Check Template](docs/real_api_check_template.md)。
 
-当 `model_profiles.yaml` 缺失或 API 密钥未配置时：
-- `local` 模式正常运行
-- `cloud` 模式记录 "model_unavailable"，处理继续
-- `auto` 模式自动降级至本地 stub
+## 验证与安全门禁
 
-### OpenAI 兼容端点（中国大陆用户示例）
+默认测试完全离线：
 
-支持任何 OpenAI 兼容 API，如 DeepSeek、智谱 GLM、通义千问、Kimi 等。在 `.env` 中配置相应 endpoint 即可。
+```bash
+env -u DATA_AGENT_DEMO_INBOX .venv/bin/python -m pytest -q
+.venv/bin/python -m compileall -q data_agent scripts
+git diff --check
+```
 
-## 注意事项
+当前离线基线：`262 passed, 52 skipped`。52 个 skip 为未配置 `DATA_AGENT_DEMO_INBOX` 时的 demo 集成测试，不代表真实 demo 流程已经在当前环境执行。
 
-- 不修改原始 demo 文件
-- 重跑不覆盖旧 L2，生成新 L2 + replaces relationship
-- 不输出科研结论或机理解释
-- 云端模型为可选增强，本地流程必须可完整跑完
-- **严禁将真实 API Key 写入仓库文件**，仅存储在 `.env`
-- `model_profiles.yaml` 和 `.env` 已加入 `.gitignore`
+真实调用后，对仓库、workspace、SQLite 和 ZIP 执行精确密钥扫描：
+
+```bash
+.venv/bin/python scripts/audit_secret_leaks.py \
+  --repo . \
+  --workspace "$SMOKE_WORKSPACE" \
+  --zip "$EXPORTED_ZIP"
+```
+
+任何真实密钥进入 Git、workspace、报告、SQLite 或 ZIP 都属于发布阻塞问题。
+
+## 关键工程约束
+
+- 原始文件和旧 L2 结果不可覆盖
+- validation 不静默修复业务数据
+- export 不把 ZIP 生成等同于 validation 通过
+- symlink、路径穿越和不安全归档成员会被拒绝
+- 模型输出经过角色级 schema 校验和递归禁止字段清理
+- `reasoning_content` 不作为最终模型输出
+- 低置信度、解析失败、截断和 fallback 必须进入人工复核流程
+- UI、Markdown、JSON、异常和导出内容使用统一脱敏规则
+
+## 项目结构
+
+```text
+data_agent/
+├── model_adapters/     # provider profiles、请求、解析、schema、fallback、脱敏
+├── processors/         # 各数据类型的确定性处理器
+├── ui/                 # Streamlit 操作与复核界面
+├── ingest.py           # 输入登记和 L0→L1 归档
+├── process.py          # 统一处理、模型调用和 evidence 编排
+├── validation.py       # package 完整性与关系验证
+├── export.py           # validation-aware 安全 ZIP 导出
+├── sample_index.py     # workspace 样品索引
+└── schemas.py          # 生命周期和审计对象
+marimo_apps/            # 交互式复核工作台
+scripts/                # 真实 API smoke 与安全扫描
+tests/                  # 离线单元、集成、安全和 UI 测试
+docs/                   # 数据契约、模型层、UI 与真实调用文档
+```
+
+## 状态与文档
+
+- [Current Release Status](CURRENT_RELEASE_STATUS.md)：唯一当前发布状态入口
+- [Real API Check](REAL_API_CHECK.md)：真实 provider 调用证据
+- [Model Integration Audit](docs/real_model_integration_audit.md)：路由和审计链
+- [Data Input Contract](docs/data_input_contract.md)：输入数据规范
+- [UI Walkthrough](docs/ui_walkthrough.md)：界面操作流程
+- `FINAL_CHECK.md`、`MODEL_LAYER_CHECK.md`、`FRONTEND_CHECK.md`：历史 checkpoint
+
+## License
+
+本项目采用 MIT License，详见 [LICENSE](LICENSE)。

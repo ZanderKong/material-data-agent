@@ -1,5 +1,7 @@
 # Validation Check
 
+> Historical checkpoint. This report records the state at its original commit/date and is not the current release status. See `CURRENT_RELEASE_STATUS.md` for the latest verified state.
+
 ## Current Status
 
 - **Date**: 2026-07-11
