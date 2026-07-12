@@ -18,7 +18,7 @@ python3.10 -m venv .venv
 - **基础 demo 闭环**：ingest → process → review → info
 - **Model Service Layer 已实现**：可配置模型角色、路由、fallback
 - **Streamlit Local UI 已实现**：6-tab 前端，支持 ingest/upload/process/review/查看
-- **pytest**：234 passed（2026-07-10 全量运行结果）
+- **pytest**：242 passed, 52 skipped（2026-07-11 Release Candidate；demo 集成测试需 DATA_AGENT_DEMO_INBOX 环境变量）
 - **L2 版本化输出**：已实现（run 前缀）
 - **Rerun replaces/replaced_by**：已实现
 - **Marimo 复核命令**：可生成
@@ -40,8 +40,9 @@ python3.10 -m venv .venv
 .venv/bin/python -m data_agent --help
 
 # 初始化 ingest
+DATA_AGENT_DEMO_INBOX=/path/to/demo-inbox
 .venv/bin/python -m data_agent ingest \
-  --inbox "/Users/zanderkong/Desktop/数据处理agent/material_data_agent_demo 测试数据/inbox" \
+  --inbox "$DATA_AGENT_DEMO_INBOX" \
   --workspace work/check-ws
 
 # 处理全部任务
@@ -86,8 +87,9 @@ rm -rf work/check-ws
 
 .venv/bin/python -m pytest -q
 
+DATA_AGENT_DEMO_INBOX=/path/to/demo-inbox
 .venv/bin/python -m data_agent ingest \
-  --inbox "/Users/zanderkong/Desktop/数据处理agent/material_data_agent_demo 测试数据/inbox" \
+  --inbox "$DATA_AGENT_DEMO_INBOX" \
   --workspace work/check-ws
 
 .venv/bin/python -m data_agent process \

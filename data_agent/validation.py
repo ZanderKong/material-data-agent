@@ -387,20 +387,39 @@ def _check_relationships(td: Path, ws: Path, c: _Collector) -> None:
 
     # Build registries from DB when available
     db_path = get_db_path(ws)
+    endpoint_registry: set[str] = set()
+    object_metadata: dict[str, dict[str, str]] = {}
     l2_subtypes: dict[str, str] = {}     # object_id -> subtype
     run_ids: set[str] = set()
     run_tools: dict[str, str] = {}        # run_id -> tool_name
+    registry_available = False
     if db_path.exists():
         conn = None
         try:
             conn = get_conn(ws)
             for obj in get_data_objects_by_task(conn, td.name):
-                l2_subtypes[str(obj["object_id"])] = str(obj["subtype"])
+                oid = str(obj["object_id"])
+                endpoint_registry.add(oid)
+                l2_subtypes[oid] = str(obj["subtype"])
+                object_metadata[oid] = {
+                    "lifecycle": str(obj["lifecycle"]),
+                    "subtype": str(obj["subtype"]),
+                    "data_type": str(obj["data_type"]),
+                }
+            for frow in get_files_by_task(conn, td.name):
+                endpoint_registry.add(str(frow["file_id"]))
             for row in conn.execute("SELECT run_id, tool_name FROM processing_runs WHERE task_id = ?", (td.name,)).fetchall():
                 run_ids.add(str(row["run_id"]))
                 run_tools[str(row["run_id"])] = str(row["tool_name"])
-        except Exception:
-            pass
+            registry_available = True
+        except Exception as ex:
+            c.add("rels_registry_unavailable", "warn", f"SQLite registry unavailable for relationship checks: {type(ex).__name__}")
+            endpoint_registry.clear()
+            object_metadata.clear()
+            l2_subtypes.clear()
+            run_ids.clear()
+            run_tools.clear()
+            registry_available = False
         finally:
             if conn:
                 conn.close()
@@ -429,24 +448,30 @@ def _check_relationships(td: Path, ws: Path, c: _Collector) -> None:
             continue
 
         if rtype == "derived_from":
-            if db_path.exists():
-                if src not in l2_subtypes and tgt not in l2_subtypes:
-                    c.add("rels_derived_from_unknown", "error", f"derived_from {rid} endpoints not found in registry")
-            run_id = meta.get("run_id", "")
-            if run_id:
-                if run_id not in run_ids:
-                    c.add("rels_derived_from_run_missing", "error", f"derived_from run_id '{run_id}' not found in processing_runs")
-                elif tgt in l2_subtypes:
-                    tool = run_tools.get(run_id, "")
-                    if tool and not tool.startswith("model:") and any("model_result" in k for k in [l2_subtypes.get(tgt, "")]):
-                        c.add("rels_model_result_non_model_run", "error", f"model_result derived_from {rid} run '{run_id}' is not a model:* run")
+            if registry_available:
+                if src not in endpoint_registry:
+                    c.add("rels_derived_from_unknown_source", "error", f"derived_from {rid} source_id '{src}' not found in registry")
+                if tgt not in endpoint_registry:
+                    c.add("rels_derived_from_unknown_target", "error", f"derived_from {rid} target_id '{tgt}' not found in registry")
+                run_id = meta.get("run_id", "")
+                if run_id:
+                    if run_id not in run_ids:
+                        c.add("rels_derived_from_run_missing", "error", f"derived_from run_id '{run_id}' not found in processing_runs")
+                    elif object_metadata.get(tgt, {}).get("data_type") == "model_result":
+                        tool = run_tools.get(run_id, "")
+                        if tool and not tool.startswith("model:"):
+                            c.add("rels_model_result_non_model_run", "error", f"model_result derived_from {rid} run '{run_id}' is not a model:* run")
 
         if rtype == "replaces":
             if src == tgt:
                 c.add("rels_self_replace", "error", f"replaces self-reference: {src}")
             else:
                 replaces_pairs.add((src, tgt))
-                if db_path.exists():
+                if registry_available:
+                    if src not in endpoint_registry:
+                        c.add("rels_replaces_unknown_source", "error", f"replaces {rid} source_id '{src}' not found in registry")
+                    if tgt not in endpoint_registry:
+                        c.add("rels_replaces_unknown_target", "error", f"replaces {rid} target_id '{tgt}' not found in registry")
                     if src in l2_subtypes and tgt in l2_subtypes:
                         if l2_subtypes[src] != l2_subtypes[tgt]:
                             c.add("rels_replaces_subtype_mismatch", "error", f"replaces {src} (subtype={l2_subtypes[src]}) and {tgt} (subtype={l2_subtypes[tgt]}) differ")
@@ -456,6 +481,11 @@ def _check_relationships(td: Path, ws: Path, c: _Collector) -> None:
                 c.add("rels_self_replaced_by", "error", f"replaced_by self-reference: {src}")
             else:
                 replaced_by_pairs.add((src, tgt))
+                if registry_available:
+                    if src not in endpoint_registry:
+                        c.add("rels_replaced_by_unknown_source", "error", f"replaced_by {rid} source_id '{src}' not found in registry")
+                    if tgt not in endpoint_registry:
+                        c.add("rels_replaced_by_unknown_target", "error", f"replaced_by {rid} target_id '{tgt}' not found in registry")
 
     # Reciprocal check: every (replaces new, old) must have (replaced_by old, new)
     for (new_obj, old_obj) in replaces_pairs:
@@ -467,7 +497,7 @@ def _check_relationships(td: Path, ws: Path, c: _Collector) -> None:
             c.add("rels_replaced_by_no_reciprocal", "error", f"replaced_by {old_obj} -> {new_obj} missing reciprocal replaces")
 
     # Check: same subtype L2 objects with multiple entries must have replacement evidence
-    if db_path.exists():
+    if registry_available:
         subtype_objs: dict[str, list[str]] = {}
         for oid, st in l2_subtypes.items():
             if st:
@@ -548,84 +578,146 @@ def _check_quality_flags(td: Path, c: _Collector) -> None:
 # ---------------------------------------------------------------------------
 
 def _write_validation_reports(td: Path, result: ValidationResult) -> bool:
-    """Write validation JSON and Markdown reports atomically.
+    """Write validation JSON and Markdown reports with incomplete-marker protocol.
 
-    Returns True when both artifacts are successfully written and paths
-    set on the result. Returns False on any failure and adds report_write_failed.
+    Writes an incomplete marker first, then canonical JSON and Markdown via
+    atomic replace. Deletes marker only after both succeed. Readers must
+    check marker before trusting canonical files.
     """
+    json_path = td / "logs" / "package_validation_result.json"
+    md_path = td / "logs" / "package_validation_report.md"
+    marker_path = td / "logs" / "package_validation_incomplete.json"
+
+    resolved_json = str(json_path.resolve())
+    resolved_md = str(md_path.resolve())
+
+    tmp_json = json_path.with_suffix(json_path.suffix + ".tmp")
+    tmp_md = md_path.with_suffix(md_path.suffix + ".tmp")
+    tmp_marker = marker_path.with_suffix(marker_path.suffix + ".tmp")
+
+    # 1. Write incomplete marker atomically
+    marker_data = {
+        "task_id": result.task_id,
+        "validated_at": result.validated_at,
+        "message": "Validation report write did not complete; rerun validation.",
+    }
+    try:
+        with open(tmp_marker, "w", encoding="utf-8") as f:
+            json.dump(marker_data, f, ensure_ascii=False, indent=2)
+        tmp_marker.replace(marker_path)
+    except OSError as ex:
+        result.checks.append(ValidationCheck(name="report_write_failed", status="error", message=f"Incomplete marker write failed: {safe_display_text(str(ex))}"))
+        result.errors.append(f"Incomplete marker write failed: {safe_display_text(str(ex))}")
+        result.result_path = ""
+        result.report_path = ""
+        result.status = "error"
+        if tmp_marker.exists():
+            tmp_marker.unlink(missing_ok=True)
+        return False
+
+    # 2. Set expected paths
+    result.result_path = resolved_json
+    result.report_path = resolved_md
+
+    # 3. Prepare JSON data
     try:
         json_data = result.model_dump()
     except Exception:
         json_data = {}
 
-    json_path = td / "logs" / "package_validation_result.json"
-    md_path = td / "logs" / "package_validation_report.md"
-
-    tmp_json = json_path.with_suffix(json_path.suffix + ".tmp")
-    tmp_md = md_path.with_suffix(md_path.suffix + ".tmp")
-
-    json_ok = False
-    md_ok = False
+    # 4. Write both temporary files
+    try:
+        with open(tmp_md, "w", encoding="utf-8") as f:
+            lines = [
+                "# Package Validation Report",
+                "",
+                f"- **Task**: {result.task_id}",
+                f"- **Validated**: {result.validated_at}",
+                f"- **Status**: {result.status.upper()}",
+                "",
+                "## Errors",
+            ]
+            if result.errors:
+                for e in result.errors:
+                    lines.append(f"- {safe_display_text(str(e))}")
+            else:
+                lines.append("None")
+            lines.append("")
+            lines.append("## Warnings")
+            if result.warnings:
+                for w in result.warnings:
+                    lines.append(f"- {safe_display_text(str(w))}")
+            else:
+                lines.append("None")
+            lines.append("")
+            lines.append("## Checks")
+            lines.append("")
+            lines.append("| Check | Status | Message |")
+            lines.append("|-------|--------|---------|")
+            for ch in result.checks:
+                lines.append(f"| {ch.name} | {ch.status} | {safe_display_text(ch.message)} |")
+            lines.append("")
+            lines.append("---")
+            lines.append("*Validation checks evidence integrity, not scientific correctness.*")
+            f.write("\n".join(lines))
+    except OSError as ex:
+        result.checks.append(ValidationCheck(name="report_write_failed", status="error", message=f"Markdown tmp write failed: {safe_display_text(str(ex))}"))
+        result.errors.append(f"Markdown tmp write failed: {safe_display_text(str(ex))}")
+        result.report_path = ""
+        result.status = "error"
+        if tmp_md.exists():
+            tmp_md.unlink(missing_ok=True)
+        return False
 
     try:
         with open(tmp_json, "w", encoding="utf-8") as f:
             json.dump(json_data, f, ensure_ascii=False, indent=2)
-        tmp_json.replace(json_path)
-        result.result_path = str(json_path.resolve())
-        json_ok = True
     except OSError as ex:
-        result.checks.append(ValidationCheck(name="report_write_failed", status="error", message=f"JSON report write failed: {ex}"))
-        result.errors.append(f"JSON report write failed: {ex}")
+        result.checks.append(ValidationCheck(name="report_write_failed", status="error", message=f"JSON tmp write failed: {safe_display_text(str(ex))}"))
+        result.errors.append(f"JSON tmp write failed: {safe_display_text(str(ex))}")
+        result.result_path = ""
+        result.status = "error"
         if tmp_json.exists():
             tmp_json.unlink(missing_ok=True)
-
-    try:
-        lines = [
-            f"# Package Validation Report",
-            f"",
-            f"- **Task**: {result.task_id}",
-            f"- **Validated**: {result.validated_at}",
-            f"- **Status**: {result.status.upper()}",
-            f"",
-            f"## Errors",
-        ]
-        if result.errors:
-            for e in result.errors:
-                lines.append(f"- {safe_display_text(str(e))}")
-        else:
-            lines.append("None")
-        lines.append("")
-        lines.append("## Warnings")
-        if result.warnings:
-            for w in result.warnings:
-                lines.append(f"- {safe_display_text(str(w))}")
-        else:
-            lines.append("None")
-        lines.append("")
-        lines.append("## Checks")
-        lines.append("")
-        lines.append("| Check | Status | Message |")
-        lines.append("|-------|--------|---------|")
-        for ch in result.checks:
-            lines.append(f"| {ch.name} | {ch.status} | {safe_display_text(ch.message)} |")
-        lines.append("")
-        lines.append("---")
-        lines.append("*Validation checks evidence integrity, not scientific correctness.*")
-
-        with open(tmp_md, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines))
-        tmp_md.replace(md_path)
-        result.report_path = str(md_path.resolve())
-        md_ok = True
-    except OSError as ex:
-        result.checks.append(ValidationCheck(name="report_write_failed", status="error", message=f"Markdown report write failed: {ex}"))
-        result.errors.append(f"Markdown report write failed: {ex}")
         if tmp_md.exists():
             tmp_md.unlink(missing_ok=True)
+        return False
 
-    if not json_ok or not md_ok:
+    # 5. Atomically replace Markdown first, then JSON
+    md_ok = False
+    try:
+        tmp_md.replace(md_path)
+        md_ok = True
+    except OSError as ex:
+        result.checks.append(ValidationCheck(name="report_write_failed", status="error", message=f"Markdown replace failed: {safe_display_text(str(ex))}"))
+        result.errors.append(f"Markdown replace failed: {safe_display_text(str(ex))}")
+        result.report_path = ""
+        result.status = "error"
+        if tmp_md.exists():
+            tmp_md.unlink(missing_ok=True)
+        if tmp_json.exists():
+            tmp_json.unlink(missing_ok=True)
+        return False
+
+    try:
+        tmp_json.replace(json_path)
+    except OSError as ex:
+        result.checks.append(ValidationCheck(name="report_write_failed", status="error", message=f"JSON replace failed: {safe_display_text(str(ex))}"))
+        result.errors.append(f"JSON replace failed: {safe_display_text(str(ex))}")
+        result.status = "error"
+        if tmp_json.exists():
+            tmp_json.unlink(missing_ok=True)
+        return False
+
+    # 6. Delete marker on success
+    try:
+        marker_path.unlink()
+    except OSError as ex:
+        result.checks.append(ValidationCheck(name="report_write_failed", status="error", message=f"Marker cleanup failed: {safe_display_text(str(ex))}"))
+        result.errors.append(f"Marker cleanup failed: {safe_display_text(str(ex))}")
         result.status = "error"
         return False
+
     return True
 
 

@@ -4,7 +4,7 @@
 
 - **日期**：2026-07-09
 - **项目**：Material R&D Data Processing Agent MVP
-- **路径**：`/Users/kong/Library/Mobile Documents/com~apple~CloudDocs/ZanderKong/材料研发数据处理Agent`
+- **路径**：`<repository root>`（公开发布前已脱敏本机历史路径）
 - **范围**：本报告基于 `DEEPSEEK_NEXT_PLAN.md` 模型服务层审计闭环 + `CURRENT_PROGRESS_AND_NEXT_PLAN.md` 下一步计划执行验收。
 
 ## 1. pytest 结果

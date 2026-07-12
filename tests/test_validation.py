@@ -241,3 +241,355 @@ class TestValidateTask:
         (ws / "tasks" / "task_0001" / "raw" / "data.csv").write_text("test")
         result = validate_task(ws, "task_0001", write_report=False)
         assert result.status == "error"
+
+    def test_relationship_file_endpoint_accepted(self, tmp_path):
+        ws = self._build_ws(tmp_path)
+        self._init_db(ws)
+        from data_agent.db import get_conn
+        conn = get_conn(ws)
+        conn.execute("INSERT INTO files (file_id, task_id, original_name, stored_path, checksum_sha256, size_bytes, lifecycle, registered_at) VALUES (?,?,?,?,?,?,?,?)", ("f_src", "task_0001", "src.csv", "/tmp/fake", "hash", 4, "L0", "2024-01-01"))
+        conn.execute("INSERT INTO files (file_id, task_id, original_name, stored_path, checksum_sha256, size_bytes, lifecycle, registered_at) VALUES (?,?,?,?,?,?,?,?)", ("f_tgt", "task_0001", "tgt.csv", "/tmp/fake", "hash", 4, "L1", "2024-01-01"))
+        conn.commit()
+        conn.close()
+        with open(ws / "tasks" / "task_0001" / "logs" / "relationships.json", "w") as f:
+            json.dump([{"rel_id": "r1", "rel_type": "derived_from", "source_id": "f_src", "target_id": "f_tgt", "metadata": {"run_id": ""}}], f)
+        result = validate_task(ws, "task_0001", write_report=False)
+        unknown_errors = [ch for ch in result.checks if "unknown" in ch.name and ch.status == "error"]
+        assert not unknown_errors, f"File endpoint rejected as unknown: {unknown_errors}"
+
+    def test_relationship_data_object_endpoint_accepted(self, tmp_path):
+        ws = self._build_ws(tmp_path)
+        self._init_db(ws)
+        from data_agent.db import get_conn
+        conn = get_conn(ws)
+        conn.execute("INSERT INTO data_objects (object_id, task_id, data_type, subtype, lifecycle, created_at) VALUES (?,?,?,?,?,?)", ("obj_src", "task_0001", "raw_numeric", "raw", "L1", "2024-01-01"))
+        conn.execute("INSERT INTO data_objects (object_id, task_id, data_type, subtype, lifecycle, created_at) VALUES (?,?,?,?,?,?)", ("obj_tgt", "task_0001", "raw_spectral", "raw", "L2", "2024-01-01"))
+        conn.commit()
+        conn.close()
+        with open(ws / "tasks" / "task_0001" / "logs" / "relationships.json", "w") as f:
+            json.dump([{"rel_id": "r1", "rel_type": "derived_from", "source_id": "obj_src", "target_id": "obj_tgt", "metadata": {"run_id": ""}}], f)
+        result = validate_task(ws, "task_0001", write_report=False)
+        unknown_errors = [ch for ch in result.checks if "unknown" in ch.name and ch.status == "error"]
+        assert not unknown_errors
+
+    def test_relationship_ghost_source_errors(self, tmp_path):
+        ws = self._build_ws(tmp_path)
+        self._init_db(ws)
+        from data_agent.db import get_conn
+        conn = get_conn(ws)
+        conn.execute("INSERT INTO data_objects (object_id, task_id, data_type, subtype, lifecycle, created_at) VALUES (?,?,?,?,?,?)", ("obj_tgt", "task_0001", "raw_spectral", "raw", "L2", "2024-01-01"))
+        conn.commit()
+        conn.close()
+        with open(ws / "tasks" / "task_0001" / "logs" / "relationships.json", "w") as f:
+            json.dump([{"rel_id": "r1", "rel_type": "derived_from", "source_id": "ghost_src", "target_id": "obj_tgt", "metadata": {"run_id": ""}}], f)
+        result = validate_task(ws, "task_0001", write_report=False)
+        assert result.status == "error"
+        assert any("unknown_source" in ch.name for ch in result.checks)
+
+    def test_relationship_ghost_target_errors(self, tmp_path):
+        ws = self._build_ws(tmp_path)
+        self._init_db(ws)
+        from data_agent.db import get_conn
+        conn = get_conn(ws)
+        conn.execute("INSERT INTO data_objects (object_id, task_id, data_type, subtype, lifecycle, created_at) VALUES (?,?,?,?,?,?)", ("obj_src", "task_0001", "raw_numeric", "raw", "L1", "2024-01-01"))
+        conn.commit()
+        conn.close()
+        with open(ws / "tasks" / "task_0001" / "logs" / "relationships.json", "w") as f:
+            json.dump([{"rel_id": "r1", "rel_type": "derived_from", "source_id": "obj_src", "target_id": "ghost_tgt", "metadata": {"run_id": ""}}], f)
+        result = validate_task(ws, "task_0001", write_report=False)
+        assert result.status == "error"
+        assert any("unknown_target" in ch.name for ch in result.checks)
+
+    def test_relationship_cross_task_endpoint_errors(self, tmp_path):
+        ws = self._build_ws(tmp_path)
+        self._init_db(ws)
+        td2 = ws / "tasks" / "task_0002"
+        td2.mkdir(parents=True)
+        for d in ("raw", "derived", "logs", "reviews"):
+            (td2 / d).mkdir()
+        with open(td2 / "manifest.json", "w") as f:
+            json.dump({"task_id": "task_0002", "status": "ingested", "input_files": [], "derived_files": [], "run_ids": [], "flag_ids": [], "review_ids": [], "object_ids": []}, f)
+        from data_agent.db import get_conn
+        conn = get_conn(ws)
+        conn.execute("INSERT INTO data_objects (object_id, task_id, data_type, subtype, lifecycle, created_at) VALUES (?,?,?,?,?,?)", ("obj_src", "task_0001", "raw_numeric", "raw", "L1", "2024-01-01"))
+        conn.execute("INSERT INTO data_objects (object_id, task_id, data_type, subtype, lifecycle, created_at) VALUES (?,?,?,?,?,?)", ("obj_other", "task_0002", "raw_spectral", "raw", "L2", "2024-01-01"))
+        conn.commit()
+        conn.close()
+        with open(ws / "tasks" / "task_0001" / "logs" / "relationships.json", "w") as f:
+            json.dump([{"rel_id": "r1", "rel_type": "derived_from", "source_id": "obj_src", "target_id": "obj_other", "metadata": {"run_id": ""}}], f)
+        result = validate_task(ws, "task_0001", write_report=False)
+        assert result.status == "error"
+        assert any("unknown_target" in ch.name for ch in result.checks)
+
+    def test_replaces_ghost_source_errors(self, tmp_path):
+        ws = self._build_ws(tmp_path)
+        self._init_db(ws)
+        from data_agent.db import get_conn
+        conn = get_conn(ws)
+        conn.execute("INSERT INTO data_objects (object_id, task_id, data_type, subtype, lifecycle, created_at) VALUES (?,?,?,?,?,?)", ("obj_tgt", "task_0001", "raw_spectral", "raw", "L2", "2024-01-01"))
+        conn.commit()
+        conn.close()
+        with open(ws / "tasks" / "task_0001" / "logs" / "relationships.json", "w") as f:
+            json.dump([{"rel_id": "r1", "rel_type": "replaces", "source_id": "ghost", "target_id": "obj_tgt"}], f)
+        result = validate_task(ws, "task_0001", write_report=False)
+        assert result.status == "error"
+        assert any("replaces" in ch.name and "unknown_source" in ch.name for ch in result.checks)
+
+    def test_replaced_by_ghost_target_errors(self, tmp_path):
+        ws = self._build_ws(tmp_path)
+        self._init_db(ws)
+        from data_agent.db import get_conn
+        conn = get_conn(ws)
+        conn.execute("INSERT INTO data_objects (object_id, task_id, data_type, subtype, lifecycle, created_at) VALUES (?,?,?,?,?,?)", ("obj_src", "task_0001", "raw_numeric", "raw", "L2", "2024-01-01"))
+        conn.commit()
+        conn.close()
+        with open(ws / "tasks" / "task_0001" / "logs" / "relationships.json", "w") as f:
+            json.dump([{"rel_id": "r1", "rel_type": "replaced_by", "source_id": "obj_src", "target_id": "ghost"}], f)
+        result = validate_task(ws, "task_0001", write_report=False)
+        assert result.status == "error"
+        assert any("replaced_by" in ch.name and "unknown_target" in ch.name for ch in result.checks)
+
+    def test_write_report_sets_nonempty_absolute_paths(self, tmp_path):
+        ws = self._build_ws(tmp_path)
+        result = validate_task(ws, "task_0001", write_report=True)
+        assert result.result_path
+        assert result.report_path
+        assert Path(result.result_path).is_absolute()
+        assert Path(result.report_path).is_absolute()
+        assert Path(result.result_path).is_file()
+        assert Path(result.report_path).is_file()
+
+    def test_persisted_json_matches_returned_result(self, tmp_path):
+        ws = self._build_ws(tmp_path)
+        result = validate_task(ws, "task_0001", write_report=True)
+        with open(result.result_path, "r") as f:
+            persisted = json.load(f)
+        assert persisted["task_id"] == result.task_id
+        assert persisted["validated_at"] == result.validated_at
+        assert persisted["status"] == result.status
+        assert persisted["result_path"] == result.result_path
+        assert persisted["report_path"] == result.report_path
+
+    def test_report_write_failure_clears_paths(self, tmp_path):
+        ws = self._build_ws(tmp_path)
+        self._init_db(ws)
+        td = ws / "tasks" / "task_0001"
+        def fail_json_replace(self, target):
+            raise OSError("simulated json write failure")
+        with patch.object(Path, "replace", fail_json_replace):
+            result = validate_task(ws, "task_0001", write_report=True)
+        assert result.status == "error"
+        assert any("report_write_failed" in ch.name for ch in result.checks)
+        assert result.result_path == ""
+
+    def test_report_write_failure_md_clears_path(self, tmp_path):
+        ws = self._build_ws(tmp_path)
+        self._init_db(ws)
+        td = ws / "tasks" / "task_0001"
+        tmp_md = td / "logs" / "package_validation_report.md.tmp"
+        call_count = [0]
+        real_replace = Path.replace
+        def fail_second_replace(self, target):
+            call_count[0] += 1
+            if call_count[0] == 2:
+                tmp_md.write_text("partial md")
+                raise OSError("simulated md write failure")
+            return real_replace(self, target)
+        with patch.object(Path, "replace", fail_second_replace):
+            result = validate_task(ws, "task_0001", write_report=True)
+        assert result.status == "error"
+        assert any("report_write_failed" in ch.name for ch in result.checks)
+        assert result.report_path == ""
+        assert not tmp_md.exists()
+
+
+class TestRelationshipModelResultSemantics:
+    def _build_ws_with_db(self, tmp_path, task_id="task_0001"):
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        td = ws / "tasks" / task_id
+        td.mkdir(parents=True)
+        for d in ("raw", "derived", "logs", "reviews"):
+            (td / d).mkdir()
+        manifest = {"task_id": task_id, "status": "processed", "input_files": [], "derived_files": [], "run_ids": ["run_1"], "flag_ids": [], "review_ids": [], "object_ids": ["obj_src", "obj_tgt"]}
+        with open(td / "manifest.json", "w") as f:
+            json.dump(manifest, f)
+        from data_agent.db import init_db
+        init_db(ws).close()
+        return ws
+
+    def _insert_objects_and_file(self, ws, conn, task_id, tgt_data_type, tgt_subtype):
+        conn.execute("INSERT INTO data_objects (object_id, task_id, data_type, subtype, lifecycle, created_at) VALUES (?,?,?,?,?,?)", ("obj_src", task_id, "raw_numeric", "raw", "L1", "2024-01-01"))
+        conn.execute("INSERT INTO data_objects (object_id, task_id, data_type, subtype, lifecycle, created_at) VALUES (?,?,?,?,?,?)", ("obj_tgt", task_id, tgt_data_type, tgt_subtype, "L2", "2024-01-01"))
+        conn.execute("INSERT INTO files (file_id, task_id, original_name, stored_path, checksum_sha256, size_bytes, lifecycle, registered_at) VALUES (?,?,?,?,?,?,?,?)", ("f1", task_id, "data.csv", "/tmp/f.csv", "hash", 4, "L1", "2024-01-01"))
+        conn.commit()
+
+    def test_normal_l2_with_nonmodel_run_no_false_positive(self, tmp_path):
+        ws = self._build_ws_with_db(tmp_path)
+        from data_agent.db import get_conn
+        conn = get_conn(ws)
+        self._insert_objects_and_file(ws, conn, "task_0001", tgt_data_type="numeric_table", tgt_subtype="raw")
+        conn.execute("INSERT INTO processing_runs (run_id, task_id, tool_name, status, created_at) VALUES (?,?,?,?,?)", ("run_1", "task_0001", "csv_processor", "succeeded", "2024-01-01"))
+        conn.commit()
+        conn.close()
+        td = ws / "tasks" / "task_0001"
+        with open(td / "logs" / "relationships.json", "w") as f:
+            json.dump([{"rel_id": "r1", "rel_type": "derived_from", "source_id": "obj_src", "target_id": "obj_tgt", "metadata": {"run_id": "run_1"}}], f)
+        result = validate_task(ws, "task_0001", write_report=False)
+        false_positive = [ch for ch in result.checks if ch.name == "rels_model_result_non_model_run" and ch.status == "error"]
+        assert not false_positive, f"Falsely flagged as model_result: {false_positive}"
+
+    def test_model_result_with_nonmodel_run_errors(self, tmp_path):
+        ws = self._build_ws_with_db(tmp_path)
+        from data_agent.db import get_conn
+        conn = get_conn(ws)
+        self._insert_objects_and_file(ws, conn, "task_0001", tgt_data_type="model_result", tgt_subtype="model")
+        conn.execute("INSERT INTO processing_runs (run_id, task_id, tool_name, status, created_at) VALUES (?,?,?,?,?)", ("run_1", "task_0001", "csv_processor", "succeeded", "2024-01-01"))
+        conn.commit()
+        conn.close()
+        td = ws / "tasks" / "task_0001"
+        with open(td / "logs" / "relationships.json", "w") as f:
+            json.dump([{"rel_id": "r1", "rel_type": "derived_from", "source_id": "obj_src", "target_id": "obj_tgt", "metadata": {"run_id": "run_1"}}], f)
+        result = validate_task(ws, "task_0001", write_report=False)
+        assert any(ch.name == "rels_model_result_non_model_run" and ch.status == "error" for ch in result.checks)
+
+    def test_model_result_with_model_run_passes(self, tmp_path):
+        ws = self._build_ws_with_db(tmp_path)
+        from data_agent.db import get_conn
+        conn = get_conn(ws)
+        self._insert_objects_and_file(ws, conn, "task_0001", tgt_data_type="model_result", tgt_subtype="model")
+        conn.execute("INSERT INTO processing_runs (run_id, task_id, tool_name, status, created_at) VALUES (?,?,?,?,?)", ("run_1", "task_0001", "model:vision", "succeeded", "2024-01-01"))
+        conn.commit()
+        conn.close()
+        td = ws / "tasks" / "task_0001"
+        with open(td / "logs" / "relationships.json", "w") as f:
+            json.dump([{"rel_id": "r1", "rel_type": "derived_from", "source_id": "obj_src", "target_id": "obj_tgt", "metadata": {"run_id": "run_1"}}], f)
+        result = validate_task(ws, "task_0001", write_report=False)
+        false_positive = [ch for ch in result.checks if ch.name == "rels_model_result_non_model_run" and ch.status == "error"]
+        assert not false_positive, f"model run falsely flagged: {false_positive}"
+
+    def test_registry_read_failure_produces_warn_not_false_unknown(self, tmp_path):
+        ws = self._build_ws_with_db(tmp_path)
+        from data_agent.db import get_conn
+        conn = get_conn(ws)
+        self._insert_objects_and_file(ws, conn, "task_0001", tgt_data_type="numeric_table", tgt_subtype="raw")
+        conn.execute("INSERT INTO processing_runs (run_id, task_id, tool_name, status, created_at) VALUES (?,?,?,?,?)", ("run_1", "task_0001", "csv_processor", "succeeded", "2024-01-01"))
+        conn.commit()
+        conn.close()
+        td = ws / "tasks" / "task_0001"
+        with open(td / "logs" / "relationships.json", "w") as f:
+            json.dump([{"rel_id": "r1", "rel_type": "derived_from", "source_id": "obj_src", "target_id": "obj_tgt", "metadata": {"run_id": "run_1"}}], f)
+        from unittest.mock import patch
+        with patch("data_agent.validation.get_conn", side_effect=OSError("simulated db failure")):
+            result = validate_task(ws, "task_0001", write_report=False)
+        warn = [ch for ch in result.checks if ch.name == "rels_registry_unavailable" and ch.status == "warn"]
+        assert len(warn) >= 1, f"No registry unavailable WARN: {[ch.name for ch in result.checks]}"
+        unknown_errors = [ch for ch in result.checks if "unknown" in ch.name and ch.status == "error"]
+        assert not unknown_errors, f"Registry failure produced false unknown endpoint errors: {unknown_errors}"
+
+
+class TestIncompleteMarkerProtocol:
+    def _build_ws(self, tmp_path):
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        td = ws / "tasks" / "task_0001"
+        td.mkdir(parents=True)
+        for d in ("raw", "derived", "logs", "reviews"):
+            (td / d).mkdir()
+        manifest = {"task_id": "task_0001", "status": "ingested", "input_files": [], "derived_files": [], "run_ids": [], "flag_ids": [], "review_ids": [], "object_ids": []}
+        with open(td / "manifest.json", "w") as f:
+            json.dump(manifest, f)
+        return ws
+
+    def test_md_replace_failure_leaves_marker(self, tmp_path):
+        ws = self._build_ws(tmp_path)
+        td = ws / "tasks" / "task_0001"
+        marker_path = td / "logs" / "package_validation_incomplete.json"
+        real_replace = Path.replace
+        def fail_md_replace(self, target):
+            if target.name == "package_validation_report.md":
+                raise OSError("simulated md replace failure")
+            return real_replace(self, target)
+        with patch.object(Path, "replace", fail_md_replace):
+            result = validate_task(ws, "task_0001", write_report=True)
+        assert result.status == "error"
+        assert any(ch.name == "report_write_failed" for ch in result.checks)
+        assert marker_path.exists()
+
+    def test_json_replace_failure_leaves_marker(self, tmp_path):
+        ws = self._build_ws(tmp_path)
+        td = ws / "tasks" / "task_0001"
+        marker_path = td / "logs" / "package_validation_incomplete.json"
+        real_replace = Path.replace
+        def fail_json_replace(self, target):
+            if target.name == "package_validation_result.json":
+                raise OSError("simulated json replace failure")
+            return real_replace(self, target)
+        with patch.object(Path, "replace", fail_json_replace):
+            result = validate_task(ws, "task_0001", write_report=True)
+        assert result.status == "error"
+        assert marker_path.exists()
+
+    def test_marker_masks_stale_pass(self, tmp_path):
+        ws = self._build_ws(tmp_path)
+        td = ws / "tasks" / "task_0001"
+        json_path = td / "logs" / "package_validation_result.json"
+        json_path.write_text('{"task_id":"task_0001","status":"pass","validated_at":"2026-01-01","errors":[],"warnings":[],"result_path":"/f.json","report_path":"/f.md"}')
+        md_path = td / "logs" / "package_validation_report.md"
+        md_path.write_text("# old pass")
+        marker_path = td / "logs" / "package_validation_incomplete.json"
+        marker_path.write_text('{"task_id":"task_0001","validated_at":"2026-01-01","message":"incomplete"}')
+        from data_agent.ui.readers import read_validation_result
+        result = read_validation_result(td)
+        assert result is not None
+        assert result["status"] == "error"
+        assert result["errors"] == ["上一次验证报告未完整写入，请重新验证"]
+        assert result["result_path"] == ""
+
+    def test_successful_retry_clears_marker(self, tmp_path):
+        ws = self._build_ws(tmp_path)
+        td = ws / "tasks" / "task_0001"
+        marker_path = td / "logs" / "package_validation_incomplete.json"
+        marker_path.write_text('{"task_id":"task_0001","validated_at":"2026-01-01","message":"incomplete"}')
+        result = validate_task(ws, "task_0001", write_report=True)
+        assert not marker_path.exists()
+        assert result.result_path
+        assert result.report_path
+        from data_agent.ui.readers import read_validation_result
+        persisted = read_validation_result(td)
+        assert persisted is not None
+        assert persisted["status"] != "error"
+
+
+class TestRegistryUnavailableRunIdGuard:
+    def _build_ws(self, tmp_path):
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        td = ws / "tasks" / "task_0001"
+        td.mkdir(parents=True)
+        for d in ("raw", "derived", "logs", "reviews"):
+            (td / d).mkdir()
+        manifest = {"task_id": "task_0001", "status": "processed", "input_files": [], "derived_files": [], "run_ids": [], "flag_ids": [], "review_ids": [], "object_ids": []}
+        with open(td / "manifest.json", "w") as f:
+            json.dump(manifest, f)
+        from data_agent.db import init_db
+        init_db(ws).close()
+        return ws
+
+    def test_registry_failure_skips_run_id_check(self, tmp_path):
+        from data_agent.validation import _check_relationships, _Collector
+        ws = self._build_ws(tmp_path)
+        td = ws / "tasks" / "task_0001"
+        with open(td / "logs" / "relationships.json", "w") as f:
+            json.dump([{"rel_id": "r1", "rel_type": "derived_from", "source_id": "obj_src", "target_id": "obj_tgt", "metadata": {"run_id": "run_1"}}], f)
+        collector = _Collector()
+        with patch("data_agent.validation.get_conn", side_effect=OSError("simulated db failure")):
+            _check_relationships(td, ws, collector)
+        warn = [ch for ch in collector.checks if ch.name == "rels_registry_unavailable" and ch.status == "warn"]
+        assert len(warn) == 1, f"Expected one rels_registry_unavailable WARN, got: {[ch.name for ch in collector.checks]}"
+        run_missing = [ch for ch in collector.checks if ch.name == "rels_derived_from_run_missing"]
+        assert not run_missing, f"Registry unavailable should not check run_id, got run_missing"
+        model_run_errors = [ch for ch in collector.checks if ch.name == "rels_model_result_non_model_run"]
+        assert not model_run_errors, f"Registry unavailable should not check model run"
+        unknown_errors = [ch for ch in collector.checks if "unknown" in ch.name and ch.status == "error"]
+        assert not unknown_errors, f"Registry unavailable should not produce unknown endpoint errors: {unknown_errors}"

@@ -85,14 +85,15 @@ class TestSampleIndex:
 
     def test_preserves_data_type(self, tmp_path):
         ws = _make_ws(tmp_path, {
-            "task_0002": {"raw_items": [("sample_ftir_chart.png", "")], "derived_items": [("model_result.json", "{}")], "derived": []},
+            "task_0002": {"raw_items": [("sample_metadata.csv", "sample_id,batch_id\nA01,B01\n"), ("sample_ftir_chart.png", "")], "derived_items": [("model_result.json", "{}")], "derived": []},
         })
         result = build_sample_index(ws)
-        chart_linked = any(
-            rt.data_type in ("chart_image_input", "raw_spectral")
-            for s in result.samples for rt in s.related_tasks
-            if rt.task_id == "task_0002"
-        )
+        assert len(result.samples) >= 1
+        a01 = next(s for s in result.samples if s.sample_id == "A01")
+        task2_entries = [rt for rt in a01.related_tasks if rt.task_id == "task_0002"]
+        assert len(task2_entries) >= 1
+        assert task2_entries[0].data_type != "model_result"
+        assert task2_entries[0].data_type in ("chart_image_input", "raw_spectral")
 
     def test_observation_links_to_single_match(self, tmp_path):
         ws = _make_ws(tmp_path, {
@@ -101,6 +102,11 @@ class TestSampleIndex:
         })
         result = build_sample_index(ws)
         assert len(result.samples) >= 1
+        a01 = next(s for s in result.samples if s.sample_id == "A01")
+        obs_entries = [rt for rt in a01.related_tasks if rt.task_id == "task_0002"]
+        assert len(obs_entries) == 1
+        assert obs_entries[0].source == "structured_observation"
+        assert obs_entries[0].confidence == 0.8
 
     def test_observation_ambiguous_unlinked(self, tmp_path):
         ws = _make_ws(tmp_path, {
@@ -134,3 +140,37 @@ class TestSampleIndex:
         orig_manifest = (td / "manifest.json").read_text()
         build_sample_index(ws)
         assert (td / "manifest.json").read_text() == orig_manifest
+
+    def test_duplicate_csv_rows_yield_single_related_task(self, tmp_path):
+        ws = _make_ws(tmp_path, {
+            "task_0001": {"raw_items": [("sample_metadata.csv", "sample_id,batch_id\nA01,B01\nA01,B01\n")], "derived_items": [], "derived": []},
+        })
+        result = build_sample_index(ws)
+        a01 = next(s for s in result.samples if s.sample_id == "A01")
+        t1_entries = [rt for rt in a01.related_tasks if rt.task_id == "task_0001"]
+        assert len(t1_entries) == 1
+
+    def test_malformed_csv_produces_parse_warning(self, tmp_path):
+        ws = _make_ws(tmp_path, {
+            "task_0001": {"raw_items": [("bad.csv", 'sample_id,bad_col\n"unclosed'), ("good.csv", "sample_id\nA01\n")], "derived_items": [], "derived": []},
+        })
+        result = build_sample_index(ws)
+        assert any(w for w in result.warnings if "bad.csv" in w)
+        unlinked = [u for u in result.unlinked_tasks if u["task_id"] == "task_0001" and u["reason"] == "csv_parse_error"]
+        assert len(unlinked) >= 1
+
+    def test_filename_candidate_in_unlinked_only(self, tmp_path):
+        ws = _make_ws(tmp_path, {
+            "task_0001": {"raw_items": [("data.csv", "col\n1\n")], "derived_items": [], "derived": []},
+        })
+        (ws / "tasks" / "task_0001" / "raw" / "B03_data.csv").write_text("col\n1")
+        result = build_sample_index(ws)
+        unlinked = [u for u in result.unlinked_tasks if u["task_id"] == "task_0001"]
+        assert len(unlinked) >= 1
+        candidates = unlinked[0].get("candidate_ids", [])
+        assert "B03" in candidates
+        for s in result.samples:
+            for rt in s.related_tasks:
+                assert rt.source != "filename_candidate"
+        b03_sample = [s for s in result.samples if s.sample_id == "B03"]
+        assert len(b03_sample) == 0

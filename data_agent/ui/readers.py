@@ -189,6 +189,28 @@ def read_task_manifest(task_dir: Path) -> dict[str, Any] | None:
 
 
 def read_validation_result(task_dir: Path) -> dict[str, Any] | None:
+    marker_path = task_dir / "logs" / "package_validation_incomplete.json"
+    if marker_path.exists():
+        marker_data = None
+        try:
+            with open(marker_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                marker_data = data
+        except (json.JSONDecodeError, FileNotFoundError):
+            pass
+        task_id = (marker_data or {}).get("task_id", task_dir.name) if marker_data else task_dir.name
+        validated_at = (marker_data or {}).get("validated_at", "") if marker_data else ""
+        return {
+            "task_id": str(task_id),
+            "status": "error",
+            "errors": ["上一次验证报告未完整写入，请重新验证"],
+            "warnings": [],
+            "report_path": "",
+            "result_path": "",
+            "validated_at": str(validated_at),
+        }
+
     path = task_dir / "logs" / "package_validation_result.json"
     if not path.exists():
         return None

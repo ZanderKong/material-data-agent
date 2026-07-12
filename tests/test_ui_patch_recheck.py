@@ -53,3 +53,70 @@ class TestQualityFlagRedaction:
         assert "Bearer [REDACTED]" in result
         assert env_secret not in result
         assert "REDACTED" in result
+
+
+class TestSampleIndexFailureUI:
+    def test_do_index_samples_empty_workspace_succeeds(self, tmp_path):
+        from data_agent.ui.actions import do_index_samples
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        (ws / "tasks").mkdir()
+        result = do_index_samples(ws)
+        assert result.get("success") is True
+
+    def test_do_index_samples_oserror_returns_failure(self, tmp_path, monkeypatch):
+        from data_agent.ui.actions import do_index_samples
+        from data_agent.sample_index import build_sample_index
+        def mock_build(ws):
+            raise OSError("simulated disk full")
+        monkeypatch.setattr("data_agent.ui.actions.build_sample_index", mock_build)
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        (ws / "tasks").mkdir()
+        result = do_index_samples(ws)
+        assert result.get("success") is False
+        assert len(result.get("warnings", [])) >= 1
+
+
+class TestExportPathTaskSpecific:
+    def test_export_path_keyed_by_task(self):
+        session_state = {}
+        tid = "task_0001"
+        zip_path = "/tmp/export_task_0001.zip"
+        export_paths = session_state.get("export_zip_path_by_task", {})
+        assert export_paths.get(tid) is None
+        export_paths[tid] = zip_path
+        session_state["export_zip_path_by_task"] = export_paths
+        stored = session_state.get("export_zip_path_by_task", {}).get(tid)
+        assert stored == zip_path
+
+
+class TestPersistedValidationReader:
+    def test_reads_persisted_validation_json(self, tmp_path):
+        from data_agent.ui.readers import read_validation_result
+        td = tmp_path / "task_0001"
+        td.mkdir(parents=True)
+        (td / "logs").mkdir()
+        val_json = td / "logs" / "package_validation_result.json"
+        val_json.write_text('{"task_id":"task_0001","status":"warn","validated_at":"2026-01-01","errors":[],"warnings":[],"report_path":"/tmp/rpt.md","result_path":"/tmp/rpt.json"}')
+        result = read_validation_result(td)
+        assert result is not None
+        assert result["task_id"] == "task_0001"
+        assert result["status"] == "warn"
+
+    def test_returns_none_when_no_file(self, tmp_path):
+        from data_agent.ui.readers import read_validation_result
+        td = tmp_path / "task_none"
+        td.mkdir(parents=True)
+        result = read_validation_result(td)
+        assert result is None
+
+    def test_returns_none_for_invalid_json(self, tmp_path):
+        from data_agent.ui.readers import read_validation_result
+        td = tmp_path / "task_0001"
+        td.mkdir(parents=True)
+        (td / "logs").mkdir()
+        val_json = td / "logs" / "package_validation_result.json"
+        val_json.write_text("{bad")
+        result = read_validation_result(td)
+        assert result is None

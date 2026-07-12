@@ -44,17 +44,22 @@ def _clean_id(val: Any) -> str | None:
     return s
 
 
-def _read_csv_ids(path: Path, target_cols: list[str]) -> list[dict[str, str]]:
-    """Read sample_id and batch_id columns using chunked CSV reads."""
+def _read_csv_ids(path: Path, target_cols: list[str]) -> tuple[list[dict[str, str]], list[str]]:
+    """Read sample_id and batch_id columns using chunked CSV reads.
+
+    Returns (results, warnings). Results are list of {sample_id, batch_id} dicts.
+    Warnings are redacted messages about parse/read failures.
+    """
     results: list[dict[str, str]] = []
+    warnings: list[str] = []
     try:
         header = pd.read_csv(path, nrows=0)
-    except Exception:
-        return results
+    except Exception as ex:
+        return results, [f"CSV parse error: {path.name}: {type(ex).__name__}"]
     cols_lower = {c.lower(): c for c in header.columns}
     usecols = [c for c in header.columns if c.lower() in target_cols]
     if not usecols or "sample_id" not in cols_lower:
-        return results
+        return results, []
 
     sid_col = cols_lower["sample_id"]
     bid_col = cols_lower.get("batch_id", cols_lower.get("batchid", None))
@@ -71,9 +76,9 @@ def _read_csv_ids(path: Path, target_cols: list[str]) -> list[dict[str, str]]:
                     if bv is not None:
                         bid = bv
                 results.append({"sample_id": sid, "batch_id": bid})
-    except Exception:
-        pass
-    return results
+    except Exception as ex:
+        return results, [f"CSV chunk read error: {path.name}: {type(ex).__name__}"]
+    return results, warnings
 
 
 def _extract_observation_ids(td: Path) -> list[dict[str, str]]:
@@ -186,15 +191,27 @@ def build_sample_index(workspace: Path) -> SampleIndexResult:
                 is_metadata = "metadata" in rf.name.lower()
                 conf = 1.0 if is_metadata else 0.95
                 source = "metadata_csv" if is_metadata else "numeric_spectral_csv"
-                for entry in _read_csv_ids(rf, ["sample_id", "batch_id"]):
-                    csv_entries.append((entry, conf, source))
+                csv_results, csv_warnings = _read_csv_ids(rf, ["sample_id", "batch_id"])
+                for w in csv_warnings:
+                    warnings.append(w)
+                if csv_warnings:
+                    unlinked.append({"task_id": tid, "data_type": dtype, "reason": "csv_parse_error", "candidate_ids": []})
+                seen_in_file: set[tuple[str, str]] = set()
+                for entry in csv_results:
+                    key = (entry["sample_id"], entry.get("batch_id", ""))
+                    if key not in seen_in_file:
+                        seen_in_file.add(key)
+                        csv_entries.append((entry, conf, source))
 
         if not csv_entries:
             continue
 
         for entry, conf, source in csv_entries:
             key = (entry["sample_id"], entry.get("batch_id", ""))
-            entries_by_key.setdefault(key, []).append(RelatedTask(task_id=tid, data_type=dtype, source=source, confidence=conf))
+            rt = RelatedTask(task_id=tid, data_type=dtype, source=source, confidence=conf)
+            existing = entries_by_key.setdefault(key, [])
+            if not any(e.task_id == rt.task_id and e.data_type == rt.data_type and e.source == rt.source and e.confidence == rt.confidence for e in existing):
+                existing.append(rt)
 
     # Pass 2: observation IDs link to exactly one explicit sample
     for d in sorted(tasks_dir.iterdir()):
@@ -235,10 +252,11 @@ def build_sample_index(workspace: Path) -> SampleIndexResult:
         if tid in linked_task_ids or tid in already_unlinked:
             continue
         dtype = _task_data_type(tasks_dir / tid)
+        fname_candidates = _extract_filename_candidates(tasks_dir / tid)
         if tid in tasks_with_csv:
-            unlinked.append({"task_id": tid, "data_type": dtype, "reason": "csv_without_sample_id", "candidate_ids": []})
+            unlinked.append({"task_id": tid, "data_type": dtype, "reason": "csv_without_sample_id", "candidate_ids": fname_candidates})
         else:
-            unlinked.append({"task_id": tid, "data_type": dtype, "reason": "no_sample_id_found", "candidate_ids": []})
+            unlinked.append({"task_id": tid, "data_type": dtype, "reason": "no_sample_id_found", "candidate_ids": fname_candidates})
     sid_map: dict[str, list[str]] = {}
     for (sid, bid) in entries_by_key:
         sid_map.setdefault(sid, []).append(bid)
@@ -279,9 +297,34 @@ def _csv_entries_found(td: Path) -> bool:
         return False
     for rf in raw_dir.iterdir():
         if rf.is_file() and rf.suffix.lower() == ".csv":
-            if _read_csv_ids(rf, ["sample_id"]):
+            results, _ = _read_csv_ids(rf, ["sample_id"])
+            if results:
                 return True
     return False
+
+
+def _extract_filename_candidates(td: Path) -> list[str]:
+    """Extract candidate sample IDs from filenames in raw/.
+
+    Only matches patterns of 1-3 uppercase letters followed by 2-4 digits,
+    from the filename stem. These are candidates only (confidence 0.5),
+    never confirmed associations.
+    """
+    import re
+    raw_dir = td / "raw"
+    if not raw_dir.is_dir():
+        return []
+    candidates = []
+    for rf in sorted(raw_dir.iterdir()):
+        if not rf.is_file():
+            continue
+        stem = rf.stem
+        parts = stem.replace("_", " ").replace("-", " ").split()
+        for part in parts:
+            if re.match(r'^[A-Z]{1,3}\d{2,4}$', part):
+                if part not in candidates:
+                    candidates.append(part)
+    return sorted(candidates)
 
 
 def _atomic_write(workspace: Path, result: SampleIndexResult) -> None:

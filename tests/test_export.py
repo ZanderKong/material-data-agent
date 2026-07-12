@@ -126,3 +126,206 @@ class TestExportTask:
             for name in zf.namelist():
                 assert ".." not in name
                 assert not name.startswith("/")
+
+    def test_export_blocked_by_blank_report_path(self, tmp_path):
+        ws = _build_demo_ws(tmp_path)
+        td = ws / "tasks" / "task_0001"
+        from data_agent.validation import validate_task
+        with patch("data_agent.export.validate_task") as mock_val:
+            mock_val.return_value.result_path = ""
+            mock_val.return_value.report_path = ""
+            mock_val.return_value.checks = []
+            mock_val.return_value.status = "pass"
+            result = export_task(ws, "task_0001")
+        assert not result.success
+
+    def test_export_blocked_by_wrong_report_path(self, tmp_path):
+        ws = _build_demo_ws(tmp_path)
+        with patch("data_agent.export.validate_task") as mock_val:
+            mock_val.return_value.result_path = "/wrong/path.json"
+            mock_val.return_value.report_path = "/wrong/report.md"
+            mock_val.return_value.checks = []
+            mock_val.return_value.status = "pass"
+            result = export_task(ws, "task_0001")
+        assert not result.success
+
+    def test_export_blocked_by_stale_persisted_validated_at(self, tmp_path):
+        ws = _build_demo_ws(tmp_path)
+        td = ws / "tasks" / "task_0001"
+        from data_agent.validation import ValidationResult
+        with patch("data_agent.export.validate_task") as mock_val:
+            mock_val.return_value = ValidationResult(
+                task_id="task_0001",
+                status="pass",
+                errors=[],
+                warnings=[],
+                checks=[],
+                validated_at="2026-01-01T00:00:00+00:00",
+                result_path=str((td / "logs" / "package_validation_result.json").resolve()),
+                report_path=str((td / "logs" / "package_validation_report.md").resolve()),
+            )
+            (td / "logs" / "package_validation_result.json").write_text(json.dumps({
+                "task_id": "task_0001",
+                "validated_at": "2000-01-01T00:00:00+00:00",
+                "status": "pass",
+                "result_path": str((td / "logs" / "package_validation_result.json").resolve()),
+                "report_path": str((td / "logs" / "package_validation_report.md").resolve()),
+            }))
+            (td / "logs" / "package_validation_report.md").write_text("# test")
+            result = export_task(ws, "task_0001")
+        assert not result.success
+
+    def test_export_blocked_by_different_task_id_in_json(self, tmp_path):
+        ws = _build_demo_ws(tmp_path)
+        td = ws / "tasks" / "task_0001"
+        from data_agent.validation import ValidationResult
+        with patch("data_agent.export.validate_task") as mock_val:
+            mock_val.return_value = ValidationResult(
+                task_id="task_0001",
+                status="pass",
+                errors=[],
+                warnings=[],
+                checks=[],
+                validated_at="2026-01-01T00:00:00+00:00",
+                result_path=str((td / "logs" / "package_validation_result.json").resolve()),
+                report_path=str((td / "logs" / "package_validation_report.md").resolve()),
+            )
+            (td / "logs" / "package_validation_result.json").write_text(json.dumps({
+                "task_id": "task_other",
+                "validated_at": "2026-01-01T00:00:00+00:00",
+                "status": "pass",
+                "result_path": str((td / "logs" / "package_validation_result.json").resolve()),
+                "report_path": str((td / "logs" / "package_validation_report.md").resolve()),
+            }))
+            (td / "logs" / "package_validation_report.md").write_text("# test")
+            result = export_task(ws, "task_0001")
+        assert not result.success
+
+    def test_export_with_validation_error_still_succeeds_with_warning(self, tmp_path):
+        ws = _build_demo_ws(tmp_path)
+        with patch("data_agent.export.validate_task") as mock_val:
+            from data_agent.validation import ValidationResult
+            td = ws / "tasks" / "task_0001"
+            mock_val.return_value = ValidationResult(
+                task_id="task_0001",
+                status="error",
+                errors=["test error"],
+                warnings=[],
+                checks=[],
+                validated_at="2026-01-01T00:00:00+00:00",
+                result_path=str((td / "logs" / "package_validation_result.json").resolve()),
+                report_path=str((td / "logs" / "package_validation_report.md").resolve()),
+            )
+            (td / "logs" / "package_validation_result.json").write_text(json.dumps({
+                "task_id": "task_0001",
+                "validated_at": "2026-01-01T00:00:00+00:00",
+                "status": "error",
+                "result_path": str((td / "logs" / "package_validation_result.json").resolve()),
+                "report_path": str((td / "logs" / "package_validation_report.md").resolve()),
+            }))
+            (td / "logs" / "package_validation_report.md").write_text("# test")
+            result = export_task(ws, "task_0001")
+        assert result.success
+        assert result.validation_status == "error"
+        assert any("EXPORTED WITH VALIDATION ERRORS" in w for w in result.warnings)
+
+    def test_export_blocked_by_incomplete_marker(self, tmp_path):
+        ws = _build_demo_ws(tmp_path)
+        td = ws / "tasks" / "task_0001"
+        out = tmp_path / "should_not_exist.zip"
+        marker_path = td / "logs" / "package_validation_incomplete.json"
+        marker_path.write_text('{"task_id":"task_0001","validated_at":"2026-01-01","message":"incomplete"}')
+        from data_agent.validation import ValidationResult
+        with patch("data_agent.export.validate_task") as mock_val:
+            mock_val.return_value = ValidationResult(
+                task_id="task_0001",
+                status="pass",
+                errors=[],
+                warnings=[],
+                checks=[],
+                validated_at="2026-01-01T00:00:00+00:00",
+                result_path="",
+                report_path="",
+            )
+            result = export_task(ws, "task_0001", output_path=out)
+        assert not result.success
+        assert not out.exists()
+
+    def test_symlinked_directory_under_raw_blocks_export(self, tmp_path):
+        ws = _build_demo_ws(tmp_path)
+        td = ws / "tasks" / "task_0001"
+        out = tmp_path / "should_not_exist.zip"
+        real_dir = td / "derived"
+        link_dir = td / "raw" / "linked_subdir"
+        link_dir.symlink_to(real_dir, target_is_directory=True)
+        result = export_task(ws, "task_0001", output_path=out)
+        assert not result.success
+        assert not out.exists()
+
+    def test_zip_contains_directory_entries_for_empty_dirs(self, tmp_path):
+        ws = _build_demo_ws(tmp_path)
+        td = ws / "tasks" / "task_0001"
+        for d in ("raw", "derived", "logs", "reviews"):
+            for f in list((td / d).iterdir()):
+                if f.is_file():
+                    f.unlink()
+        result = export_task(ws, "task_0001")
+        assert result.success
+        with zipfile.ZipFile(result.zip_path, "r") as zf:
+            names = zf.namelist()
+        assert "raw/" in names
+        assert "derived/" in names
+        assert "logs/" in names
+        assert "reviews/" in names
+
+    def test_zip_contains_directory_entries_with_content(self, tmp_path):
+        ws = _build_demo_ws(tmp_path)
+        result = export_task(ws, "task_0001")
+        with zipfile.ZipFile(result.zip_path, "r") as zf:
+            names = zf.namelist()
+        assert "raw/" in names
+        assert "derived/" in names
+        assert "logs/" in names
+        assert "reviews/" in names
+
+    def test_no_zip_created_on_preflight_failure(self, tmp_path):
+        ws = _build_demo_ws(tmp_path)
+        td = ws / "tasks" / "task_0001"
+        out = tmp_path / "should_not_exist.zip"
+        link = td / "raw" / "bad_link.lnk"
+        link.symlink_to(td / "raw" / "data.csv")
+        result = export_task(ws, "task_0001", output_path=out)
+        assert not result.success
+        assert not out.exists()
+
+    def test_broken_top_level_dir_symlink_blocks_export(self, tmp_path):
+        ws = _build_demo_ws(tmp_path)
+        td = ws / "tasks" / "task_0001"
+        out = tmp_path / "should_not_exist.zip"
+        import shutil
+        shutil.rmtree(td / "raw")
+        (td / "raw").symlink_to(tmp_path / "nonexistent_dir")
+        result = export_task(ws, "task_0001", output_path=out)
+        assert not result.success
+        assert not out.exists()
+
+    def test_broken_top_level_file_symlink_blocks_export(self, tmp_path):
+        ws = _build_demo_ws(tmp_path)
+        td = ws / "tasks" / "task_0001"
+        out = tmp_path / "should_not_exist.zip"
+        (td / "manifest.json").unlink()
+        (td / "manifest.json").symlink_to(tmp_path / "nonexistent_file")
+        result = export_task(ws, "task_0001", output_path=out)
+        assert not result.success
+        assert not out.exists()
+
+    def test_existing_zip_not_overwritten_on_failure(self, tmp_path):
+        ws = _build_demo_ws(tmp_path)
+        td = ws / "tasks" / "task_0001"
+        out = tmp_path / "existing.zip"
+        out.write_bytes(b"ORIGINAL ZIP CONTENT")
+        link = td / "raw" / "bad_link.lnk"
+        link.symlink_to(td / "raw" / "data.csv")
+        result = export_task(ws, "task_0001", output_path=out)
+        assert not result.success
+        assert out.read_bytes() == b"ORIGINAL ZIP CONTENT"

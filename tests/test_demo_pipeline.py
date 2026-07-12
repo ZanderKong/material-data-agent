@@ -18,7 +18,7 @@ from data_agent.package import load_manifest
 @pytest.fixture(scope="module")
 def workspace(demo_inbox):
     if not demo_inbox:
-        pytest.skip("Demo inbox not available")
+        pytest.skip("DATA_AGENT_DEMO_INBOX is not configured; optional demo integration tests skipped.")
     tmp = tempfile.mkdtemp()
     ws = Path(tmp)
     conn = init_db(ws)
@@ -273,7 +273,7 @@ def test_relationships_json_vs_db(workspace):
 
 def test_rerun_produces_replace_relationships(demo_inbox):
     if not demo_inbox:
-        pytest.skip("Demo inbox not available")
+        pytest.skip("DATA_AGENT_DEMO_INBOX is not configured; optional demo integration tests skipped.")
     tmp = tempfile.mkdtemp()
     ws = Path(tmp)
     conn = init_db(ws)

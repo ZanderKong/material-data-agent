@@ -81,8 +81,41 @@ def export_task(
                 message="Export failed: validation reports could not be written",
             )
 
+    marker_path = td / "logs" / "package_validation_incomplete.json"
+    if marker_path.exists():
+        return ExportResult(
+            success=False, task_id=task_id,
+            validation_status="error",
+            errors=["Validation incomplete marker present; rerun validation"],
+            message="Export failed: validation did not complete",
+        )
+
     result_json_path = td / "logs" / "package_validation_result.json"
     report_md_path = td / "logs" / "package_validation_report.md"
+    expected_json_resolved = str(result_json_path.resolve())
+    expected_md_resolved = str(report_md_path.resolve())
+
+    if not val_result.result_path or not val_result.report_path:
+        return ExportResult(
+            success=False, task_id=task_id,
+            validation_status=val_result.status,
+            errors=["Validation report paths are blank"],
+            message="Export failed: validation report paths not set",
+        )
+    if val_result.result_path != expected_json_resolved:
+        return ExportResult(
+            success=False, task_id=task_id,
+            validation_status=val_result.status,
+            errors=["Validation result_path does not match expected report location"],
+            message="Export failed: validation report path mismatch",
+        )
+    if val_result.report_path != expected_md_resolved:
+        return ExportResult(
+            success=False, task_id=task_id,
+            validation_status=val_result.status,
+            errors=["Validation report_path does not match expected report location"],
+            message="Export failed: validation report path mismatch",
+        )
 
     if not result_json_path.is_file() or not report_md_path.is_file():
         return ExportResult(
@@ -91,6 +124,34 @@ def export_task(
             errors=["Validation report artifacts missing after write"],
             message="Export failed: validation reports not found",
         )
+
+    try:
+        with open(result_json_path, "r", encoding="utf-8") as f:
+            persisted = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return ExportResult(
+            success=False, task_id=task_id,
+            validation_status=val_result.status,
+            errors=["Cannot read persisted validation JSON"],
+            message="Export failed: persisted validation JSON unreadable",
+        )
+    if not isinstance(persisted, dict):
+        return ExportResult(
+            success=False, task_id=task_id,
+            validation_status=val_result.status,
+            errors=["Persisted validation JSON is not a dict"],
+            message="Export failed: persisted validation JSON format invalid",
+        )
+    for field in ("task_id", "validated_at", "status", "result_path", "report_path"):
+        persisted_val = str(persisted.get(field, ""))
+        current_val = str(getattr(val_result, field, ""))
+        if persisted_val != current_val:
+            return ExportResult(
+                success=False, task_id=task_id,
+                validation_status=val_result.status,
+                errors=[safe_display_text(f"Persisted validation {field} mismatch: {persisted_val} != {current_val}")],
+                message="Export failed: persisted validation report does not match current result",
+            )
 
     # 2. Generate README
     try:
@@ -116,12 +177,18 @@ def export_task(
 
         for sub in ("manifest.json", "raw", "derived", "logs", "reviews"):
             src = td / sub
+            if src.is_symlink():
+                return None, f"Symlink in package: {sub}"
             if not src.exists():
                 continue
             if src.is_file():
                 items.append((sub, src))
             elif src.is_dir():
-                for root, _, files in os.walk(str(src)):
+                for root, dirnames, files in os.walk(str(src), followlinks=False):
+                    for d in dirnames:
+                        dpath = Path(root) / d
+                        if dpath.is_symlink():
+                            return None, f"Directory symlink in package: {dpath}"
                     for fn in files:
                         if fn.startswith("."):
                             continue
@@ -139,9 +206,7 @@ def export_task(
                         items.append((rel, fp))
         # Ensure directory entries
         for dirname in ("raw/", "derived/", "logs/", "reviews/"):
-            dirname_stripped = dirname.rstrip("/")
-            if not any(it[0] == dirname_stripped or (it[0].startswith(dirname_stripped + "/")) for it in items):
-                items.append((dirname, None))
+            items.append((dirname, None))
         return items, None
 
     items, preflight_err = _collect_files()
@@ -176,8 +241,7 @@ def export_task(
                     zf.write(str(src_path), arcname)
                     file_count += 1
                 elif src_path is None:
-                    # Directory entry
-                    pass
+                    zf.writestr(arcname, "")
 
         Path(tmp_path).replace(output_path)
 

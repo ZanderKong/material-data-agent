@@ -232,3 +232,127 @@ mkdir -p /tmp/material-agent-ui-ws
 - **pytest**: 183 passed in 7.08s
 - **compileall**: clean（无错误输出）
 - **全量测试**：新增 3 个 focused tests；原有 180 个测试全部通过
+
+## 14. Remediation Round 2 Closure（2026-07-11）
+
+窄范围 UI 修复收尾，针对 REMEDIATION_WORK_SUMMARY.md 中的 4 项 UI 子问题。
+
+### 变更内容
+
+| 变更 | 文件 | 说明 |
+|------|------|------|
+| Basic/Advanced 边界强化 | `app.py` | Basic 模式仅显示 model_result 总结（Extracted Output），非 model_result 的其他 derived files 仅在 Advanced 模式渲染。Advanced 模式保留完整 Audit/Risk/Raw Response |
+| 持久化验证结果显示 | `app.py` | Task Detail 进入时自动调用 `read_validation_result()` 显示上次验证状态，不需要重新点击 Validate |
+| 导出路径按任务隔离 | `app.py` | 新增 `st.session_state.export_zip_path_by_task`，导出成功后存储路径；切换任务时不显示其他任务的下载按钮；ZIP 文件不存在时自动清除 |
+| Sample Index 构建失败显示 | `app.py` | `Rebuild Sample Index` 按钮检查 `idx["success"]`，失败时显示错误信息，不调用 `st.rerun()` |
+| 新增 UI 测试 | `test_ui_patch_recheck.py`, `test_ui_app_smoke.py` | 持久化验证读取测试（含 invalid JSON 返回 None）、导出路径任务隔离测试、sample index 正常流程测试、AppTest session state 初始化测试 |
+
+### 验收结果
+
+- **pytest**: 276 passed
+- **compileall**: clean
+- **全量 UI 测试**: 38 passed（新增 7 个 tests）
+- **REAL_API_CHECK**: NOT RUN
+
+## 15. Patch Round — Remediation Round 2 补充收尾（2026-07-11）
+
+针对 Code X Review 发现的 6 项实现/测试缺口进行窄范围补丁。
+
+### 变更内容
+
+| 变更 | 文件 | 说明 |
+|------|------|------|
+| replaces/replaced_by 端点校验 | `validation.py` | `replaces` 和 `replaced_by` 关系增加独立的 `endpoint_registry` 校验；幽灵 src/tgt 均产生 ERROR |
+| Basic 模式预过滤 derived_files | `app.py` | Basic 模式在循环前预过滤，仅保留 `model_result` 类型条目；非 model_result 的 derived 文件在 Basic 模式不遍历 |
+| 测试空循环断言修复 | `test_sample_index.py` | `test_preserves_data_type` 增加 metadata CSV 使 task_0002 产生实际样本，确保断言执行 |
+| UI 测试真失败覆盖 | `test_ui_patch_recheck.py` | 原有假失败测试重命名为 `test_do_index_samples_empty_workspace_succeeds`；新增 `test_do_index_samples_oserror_returns_failure` 用 mock 验证真实失败返回 |
+| CSV 异常脱敏 | `sample_index.py` | `_read_csv_ids()` 的异常消息仅暴露 `type(ex).__name__`，不包含原始异常文本 |
+| seen_keys 作用域修正 | `sample_index.py` | `seen_in_file` 改为单文件级别，同一任务中不同 CSV 文件的不同 source 记录不再被过早去重 |
+
+### 手工 UI 验收
+
+> 验收日期：2026-07-11
+> Workspace：/tmp/material-agent-patch-round（含 model_result.json + chart.png derived 文件）
+> 启动命令：`.venv/bin/streamlit run data_agent/ui/app.py`
+> Model mode：local
+
+- [x] Streamlit 启动无异常，AppTest 烟雾测试通过
+- [x] Basic 模式：Derived Files expander 仅显示 model_result，非 model_result 文件（chart.png）不出现在 Basic 列表
+- [x] Advanced 模式：Derived Files expander 显示全部 derived 文件（包含 chart.png）
+- [x] `export_zip_path_by_task` 在 session state 中正确初始化
+- [x] 持久化验证结果显示：re-entry 自动读取 `logs/package_validation_result.json`
+- [x] Sample Index 构建：Rebuild 按钮可见，空 workspace 返回 0 samples 不崩溃
+
+### 自动化门禁
+
+- **pytest**: 279 passed（全量，包括新增 3 个 tests）
+- **compileall**: clean
+- **git diff --check**: clean
+- **受保护模块**: 未改动
+- **REAL_API_CHECK**: NOT RUN
+
+## 16. Remediation Round 3 — Precommit 阻塞问题修复（2026-07-11）
+
+针对 Code Review 发现的 5 项 P1 阻塞问题进行窄范围修复。
+
+### 变更内容
+
+| 变更 | 文件 | 说明 |
+|------|------|------|
+| Model-result 语义修正 | `validation.py` | 仅 `data_type == "model_result"` 的目标要求 model:* run；普通 L2 允许普通处理 run |
+| 注册表读取失败降级 WARN | `validation.py` | `except Exception` 不再静默吞掉；产生 `rels_registry_unavailable` WARN，跳过所有 DB 依赖关系检查 |
+| 不完整标记协议 | `validation.py`, `readers.py`, `export.py` | `_write_validation_reports()` 先写 marker 再写报告，成功后才删除；`read_validation_result()` 优先检查 marker，有 marker 返回 ERROR；`export_task()` marker 存在时阻断导出 |
+| Advanced 完整 JSON | `app.py` | Advanced 模式 Extracted Output 调用 `st.json(output_json)` 展示完整 JSON（含 formatter 未识别的字段）；Basic 保留 `format_model_output()` 摘要 |
+| Broken symlink 预检 | `export.py` | `is_symlink()` 检查移至 `exists()` 之前；broken symlink 不再被静默跳过 |
+
+### 手工 UI 验收
+
+> 验收日期：2026-07-11
+> Workspace：/tmp/material-agent-round3-ui（含 model_result.json + chart.png derived 文件）
+> Model mode：local
+
+- [x] Streamlit 启动无异常，七个 tab 可打开
+- [x] Basic 模式：Derived Files 仅显示 model_result（Extracted Output 为 format_model_output 摘要），普通 derived 文件不出现
+- [x] Advanced 模式：全部 derived 文件可见；Extracted Output 显示完整 JSON（含 `audit_only_payload` 字段）；Audit、Risk、Raw Response 可展开
+- [x] 不完整标记屏蔽旧 PASS：手动创建 `package_validation_incomplete.json` 后，`read_validation_result()` 返回 status=error + 固定文案
+- [x] 重新验证清除标记：执行 `validate_task(write_report=True)` 后 marker 消失，报告路径非空
+- [x] Broken top-level symlink 任务 Export 按钮返回失败，不生成 ZIP
+- [x] `export_zip_path_by_task` 在 session state 正确初始化
+
+### 自动化门禁
+
+- **pytest**: 291 passed（全量，+12 个新增 tests）
+- **compileall**: clean
+- **git diff --check**: clean
+- **受保护模块**: 未改动（ingest.py, process.py, reviews.py, schemas.py, db.py, model_adapters/ 均未改）
+- **REAL_API_CHECK**: NOT RUN
+
+## 17. Release Candidate — 发布准备与可移植性收口（2026-07-11）
+
+### 变更内容
+
+| 变更 | 文件 | 说明 |
+|------|------|------|
+| 注册表降级 run_id 防护 | `validation.py` | 全部 DB 依赖检查（endpoint + run_id + model-run）放入 `if registry_available`；注册表不可用时跳过 |
+| 导出测试拆分 | `test_export.py` | marker 测试与 nested symlink 测试完全分离，各自独立验证单一失败原因 |
+| Advanced/Basic AppTest | `test_ui_app_smoke.py` | 真实 workspace + model_result fixture + Basic/Advanced radio 切换交互测试 |
+| AppTest 本机配置隔离 | `test_ui_app_smoke.py` | fixture 强制 mock 空 model profile，避免测试读取开发者忽略的 `model_profiles.yaml` 或依赖本机配置 |
+| 可移植 conftest | `tests/conftest.py` | 移除全部硬编码本机绝对路径；`demo_inbox` 仅由 `DATA_AGENT_DEMO_INBOX` 环境变量驱动；新增 4 个可移植性测试 |
+| 公开文档路径脱敏 | `README.md`, `FINAL_CHECK.md` | demo 命令改用 `$DATA_AGENT_DEMO_INBOX`；历史验收报告使用 `<repository root>`，不公开本机路径 |
+| demo pipeline skip 文案 | `test_demo_pipeline.py` | 明确 skip 信息指向环境变量配置 |
+
+### 发布质量验证
+
+- [x] CLI validate：WARN 正常输出，report path 非空
+- [x] CLI export：生成 ZIP，包含全部 4 个目录条目（raw/ derived/ logs/ reviews/）+ README + validation report
+- [x] SHA-256 不变性：manifest 与 raw 文件在验证/导出前后未变
+- [x] 无 incomplete marker：成功验证后 marker 正确消失
+- [x] ZIP 在 task 目录外
+- [x] Streamlit 启动无异常，HTTP 200
+- [x] 公开测试可移植：`env -u DATA_AGENT_DEMO_INBOX pytest -q` → 242 passed, 52 skipped
+- [x] AppTest 不读取本机 `model_profiles.yaml`；Basic/Advanced radio 切换分别断言完整 JSON 和普通 derived image 的隐藏/显示
+- [x] `.env` / `model_profiles.yaml` 均被 gitignore 且未跟踪
+- [x] 无硬编码用户路径存留
+- [x] 受保护模块未改动
+- **NOT RUN:** `DATA_AGENT_DEMO_INBOX` 未配置时，CLI demo flow 标记 NOT RUN
+- **REAL_API_CHECK**: NOT RUN

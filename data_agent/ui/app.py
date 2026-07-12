@@ -41,6 +41,7 @@ def _init_session():
         "task_list": [],
         "task_list_workspace": "",
         "model_mode": "local",
+        "export_zip_path_by_task": {},
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -312,13 +313,19 @@ with tab_detail:
                             st.code(content[:2000] or "(empty)", language="json")
 
             # --- Derived Files ---
+            if view_mode == "Basic":
+                derived_to_show = [d for d in derived_files if get_file_kind(Path(d["path"])) == "model_result"]
+            else:
+                derived_to_show = derived_files
+
             with st.expander("Derived Files", expanded=True):
-                if not derived_files:
+                if not derived_to_show:
                     st.caption("No derived files")
-                for df_info in derived_files:
+                for df_info in derived_to_show:
                     dpath = Path(df_info["path"])
                     kind = get_file_kind(dpath)
                     label = f"{df_info['name']} ({df_info['size_bytes']} bytes)"
+
                     if kind == "model_result":
                         st.markdown(f"**{label}**")
                         data = preview_model_result(dpath)
@@ -330,44 +337,46 @@ with tab_detail:
                                 st.caption(":warning: requires_review=True 时必须人工确认。")
                                 st.caption(":warning: success=False 表示模型不可用、fallback 或 stub，不代表分析成功。")
 
-                                audit = data.get("audit", {})
-                                risk = data.get("risk", {})
+                                if view_mode == "Advanced":
+                                    audit = data.get("audit", {})
+                                    risk = data.get("risk", {})
+                                    extracted = data.get("extracted", {})
+                                    raw_data = data.get("raw", {})
+
+                                    with st.expander("Audit", expanded=True):
+                                        col_a1, col_a2, col_a3 = st.columns(3)
+                                        with col_a1:
+                                            st.metric("Role", str(audit.get("role")))
+                                            st.metric("Provider", str(audit.get("provider")))
+                                            st.metric("Model", str(audit.get("model")))
+                                        with col_a2:
+                                            st.metric("Mode", str(audit.get("mode")))
+                                            st.metric("Success", str(audit.get("success")))
+                                            st.metric("Confidence", f"{audit.get('confidence', 0):.2f}")
+                                        with col_a3:
+                                            st.metric("Fallback", "Yes" if audit.get("fallback_used") else "No")
+                                            st.metric("Fallback From", str(audit.get("fallback_from") or "-"))
+                                            st.metric("Latency", f"{audit.get('latency_ms', 0)}ms")
+                                        if audit.get("token_usage"):
+                                            st.caption(f"Token usage: {audit['token_usage']}")
+                                        if audit.get("schema_version"):
+                                            st.caption(f"Schema: {audit['schema_version']}  |  Prompt: {audit['prompt_version']}")
+
+                                    with st.expander("Risk", expanded=False):
+                                        if risk.get("error"):
+                                            st.warning(f"Error: {safe_ui_error(risk['error'])}")
+                                        if risk.get("warnings"):
+                                            for w in risk["warnings"]:
+                                                st.caption(f"Warning: {safe_ui_error(str(w))}")
+                                        col_r1, col_r2, col_r3 = st.columns(3)
+                                        with col_r1:
+                                            st.metric("Requires Review", str(risk.get("requires_review")))
+                                        with col_r2:
+                                            st.metric("OCR Unavailable", str(risk.get("ocr_unavailable")))
+                                        with col_r3:
+                                            st.metric("Vision Unavailable", str(risk.get("vision_unavailable")))
+
                                 extracted = data.get("extracted", {})
-                                raw_data = data.get("raw", {})
-
-                                with st.expander("Audit", expanded=True):
-                                    col_a1, col_a2, col_a3 = st.columns(3)
-                                    with col_a1:
-                                        st.metric("Role", str(audit.get("role")))
-                                        st.metric("Provider", str(audit.get("provider")))
-                                        st.metric("Model", str(audit.get("model")))
-                                    with col_a2:
-                                        st.metric("Mode", str(audit.get("mode")))
-                                        st.metric("Success", str(audit.get("success")))
-                                        st.metric("Confidence", f"{audit.get('confidence', 0):.2f}")
-                                    with col_a3:
-                                        st.metric("Fallback", "Yes" if audit.get("fallback_used") else "No")
-                                        st.metric("Fallback From", str(audit.get("fallback_from") or "-"))
-                                        st.metric("Latency", f"{audit.get('latency_ms', 0)}ms")
-                                    if audit.get("token_usage"):
-                                        st.caption(f"Token usage: {audit['token_usage']}")
-                                    if audit.get("schema_version"):
-                                        st.caption(f"Schema: {audit['schema_version']}  |  Prompt: {audit['prompt_version']}")
-
-                                with st.expander("Risk", expanded=False):
-                                    if risk.get("error"):
-                                        st.warning(f"Error: {safe_ui_error(risk['error'])}")
-                                    if risk.get("warnings"):
-                                        for w in risk["warnings"]:
-                                            st.caption(f"Warning: {safe_ui_error(str(w))}")
-                                    col_r1, col_r2, col_r3 = st.columns(3)
-                                    with col_r1:
-                                        st.metric("Requires Review", str(risk.get("requires_review")))
-                                    with col_r2:
-                                        st.metric("OCR Unavailable", str(risk.get("ocr_unavailable")))
-                                    with col_r3:
-                                        st.metric("Vision Unavailable", str(risk.get("vision_unavailable")))
-
                                 with st.expander("Extracted Output", expanded=True):
                                     output_json = extracted.get("output_json", {})
                                     if view_mode == "Advanced":
@@ -385,31 +394,33 @@ with tab_detail:
                                             st.caption("No extracted output")
 
                                 if view_mode == "Advanced":
+                                    raw_data = data.get("raw", {})
                                     with st.expander("Raw Response (redacted)", expanded=False):
                                         display_raw = safe_display_text(select_raw_response(raw_data))
                                         if display_raw:
                                             st.text_area("Raw", display_raw[:2000], height=150, key=f"raw_resp_{df_info['name']}")
                                         else:
                                             st.caption("No raw response available")
-                                        st.caption("No raw response available")
                         st.divider()
-                    elif kind == "image":
-                        st.image(str(dpath), caption=label, width=400)
-                    elif kind == "csv":
-                        st.markdown(f"**{label}**")
-                        df = preview_csv_dataframe(dpath)
-                        if df is not None:
-                            st.dataframe(df, use_container_width=True, key=f"derived_{df_info['name']}")
-                            st.caption(f"Preview: first {len(df)} rows")
+
+                    elif view_mode == "Advanced":
+                        if kind == "image":
+                            st.image(str(dpath), caption=label, width=400)
+                        elif kind == "csv":
+                            st.markdown(f"**{label}**")
+                            df = preview_csv_dataframe(dpath)
+                            if df is not None:
+                                st.dataframe(df, use_container_width=True, key=f"derived_{df_info['name']}")
+                                st.caption(f"Preview: first {len(df)} rows")
+                            else:
+                                content = preview_csv(dpath) or ""
+                                st.text_area("Preview", content, height=200, key=f"derived_{df_info['name']}")
+                        elif kind == "json":
+                            st.markdown(f"**{label}**")
+                            content = preview_json(dpath) or ""
+                            st.code(content[:3000] or "(empty)", language="json")
                         else:
-                            content = preview_csv(dpath) or ""
-                            st.text_area("Preview", content, height=200, key=f"derived_{df_info['name']}")
-                    elif kind == "json":
-                        st.markdown(f"**{label}**")
-                        content = preview_json(dpath) or ""
-                        st.code(content[:3000] or "(empty)", language="json")
-                    else:
-                        st.text(label)
+                            st.text(label)
 
             # --- Processing Runs ---
             if view_mode == "Advanced":
@@ -541,6 +552,27 @@ with tab_detail:
             st.divider()
 
             st.subheader("Validate Package")
+
+            persisted_val = read_validation_result(task_dir)
+            if persisted_val:
+                p_status = str(persisted_val.get("status", "pass")).upper()
+                if p_status == "PASS":
+                    st.success(f"Last Validation: {p_status}")
+                elif p_status == "WARN":
+                    st.warning(f"Last Validation: {p_status}")
+                else:
+                    st.error(f"Last Validation: {p_status}")
+                if persisted_val.get("errors"):
+                    for e in persisted_val["errors"]:
+                        st.text(safe_display_text(str(e)))
+                if persisted_val.get("warnings"):
+                    for w in persisted_val["warnings"]:
+                        st.caption(safe_display_text(str(w)))
+                if persisted_val.get("report_path"):
+                    st.caption(f"Report: {persisted_val['report_path']}")
+                if persisted_val.get("validated_at"):
+                    st.caption(f"Validated: {persisted_val['validated_at']}")
+
             if st.button("Validate Package", key="btn_validate"):
                 with st.spinner("Validating..."):
                     val_result = do_validate_package(ws, tid)
@@ -564,6 +596,17 @@ with tab_detail:
 
             st.divider()
             st.subheader("Export Review Package")
+            export_paths = st.session_state.get("export_zip_path_by_task", {})
+            current_zip = export_paths.get(tid, "")
+            if current_zip:
+                zip_path = Path(current_zip)
+                if zip_path.is_file():
+                    with open(zip_path, "rb") as zf:
+                        st.download_button("Download ZIP", zf.read(), file_name=zip_path.name, mime="application/zip")
+                else:
+                    export_paths.pop(tid, None)
+                    st.session_state.export_zip_path_by_task = export_paths
+
             if st.button("Export Review Package", key="btn_export"):
                 with st.spinner("Exporting..."):
                     exp = do_export_package(ws, tid)
@@ -572,10 +615,9 @@ with tab_detail:
                         st.warning("EXPORTED WITH VALIDATION ERRORS")
                     st.success(exp.get("message", ""))
                     if exp.get("zip_path"):
-                        zip_path = Path(exp["zip_path"])
-                        if zip_path.exists():
-                            with open(zip_path, "rb") as zf:
-                                st.download_button("Download ZIP", zf.read(), file_name=zip_path.name, mime="application/zip")
+                        export_paths[tid] = exp["zip_path"]
+                        st.session_state.export_zip_path_by_task = export_paths
+                        st.rerun()
                 else:
                     st.error(safe_ui_error(exp.get("message", "Export failed")))
 
@@ -587,8 +629,13 @@ with tab_samples:
     if st.button("Rebuild Sample Index", key="btn_rebuild_index"):
         with st.spinner("Building..."):
             idx = do_index_samples(ws)
-        st.success(f"Indexed {len(idx.get('samples', []))} samples, {len(idx.get('unlinked_tasks', []))} unlinked")
-        st.rerun()
+        if idx.get("success") is False:
+            st.error(safe_display_text("Sample Index build failed"))
+            for w in idx.get("warnings", []):
+                st.caption(safe_display_text(str(w)))
+        else:
+            st.success(f"Indexed {len(idx.get('samples', []))} samples, {len(idx.get('unlinked_tasks', []))} unlinked")
+            st.rerun()
 
     idx_data = read_sample_index(ws)
     samples = idx_data.get("samples", [])
