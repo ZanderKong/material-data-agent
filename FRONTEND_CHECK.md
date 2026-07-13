@@ -1,5 +1,7 @@
 # FRONTEND_CHECK.md：前端操作闭环验收报告
 
+> Historical checkpoint. This report records the state at its original commit/date and is not the current release status. See `CURRENT_RELEASE_STATUS.md` for the latest verified state.
+
 ## 1. 本轮目标
 
 为材料研发数据处理 Agent 增加 Streamlit 本地前端操作闭环，并进行收口验收。

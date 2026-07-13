@@ -1,5 +1,7 @@
 # FINAL_CHECK.md：最终验收报告
 
+> Historical checkpoint. This report records the state at its original commit/date and is not the current release status. See `CURRENT_RELEASE_STATUS.md` for the latest verified state.
+
 ## 0. 验收日期与范围
 
 - **日期**：2026-07-09

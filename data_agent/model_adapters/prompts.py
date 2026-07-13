@@ -21,6 +21,9 @@ CHART_IMAGE_OCR_PROMPT = """Analyze this chart image and extract:
 - legend_text
 - visible_series_count
 - text_blocks (all visible text)
+- axis_candidates (list of axis label candidates)
+- unreadable_regions (list of ambiguous or unreadable areas)
+- uncertainties (list of ambiguity descriptions)
 - requires_review (true if any text is ambiguous)
 - confidence (0.0-1.0)
 
@@ -30,22 +33,10 @@ CHART_IMAGE_VISION_SYSTEM = SYSTEM_BOUNDARY + (
     " Describe visible chart structure: chart type, axes, curves, peaks, labels, legends."
 )
 
-CHART_IMAGE_VISION_PROMPT = """Analyze this chart image and extract:
-- image_kind (e.g. "line_chart", "bar_chart")
-- chart_type
-- title
-- x_axis_label
-- y_axis_label
-- detected_units
-- legend_text
-- visible_series_count
-- visible_peak_candidates (list of approximate x,y positions of visible peaks)
-- text_blocks
-- uncertainties (list of any ambiguous features)
-- requires_review
-- confidence (0.0-1.0)
-
-Output JSON only."""
+CHART_IMAGE_VISION_PROMPT = """Return exactly one compact JSON object, then stop. No prose or Markdown.
+Use this complete schema; use empty strings/lists and requires_review=true for anything not clearly visible:
+{"image_kind":"","chart_type":"","x_axis_label":"","y_axis_label":"","detected_units":[],"legend_text":[],"visible_series_count":0,"visible_peak_candidates":[],"text_blocks":[],"uncertainties":[],"requires_review":true,"confidence":0.0}
+Only describe visible chart structure. Peaks are approximate visual candidates, never source data."""
 
 VISUAL_IMAGE_VISION_SYSTEM = SYSTEM_BOUNDARY + (
     " Describe visible content of surface/microscope images: objects, features, annotations."
@@ -71,12 +62,13 @@ OBSERVATION_TEXT_SYSTEM = SYSTEM_BOUNDARY + (
 
 OBSERVATION_TEXT_PROMPT = """Analyze this observation text and extract:
 - factual_observations (list of observed facts)
-- trend_or_statements (trend-like descriptions)
+- trend_statements (trend-like descriptions)
 - interpretation_candidates (phrases suggesting speculation, with uncertainty markers like "可能", "或许", "大概")
 - operator_notes
 - sample_ids
 - time_expressions
 - phenomenon_types
+- uncertainties (list of ambiguity descriptions)
 - requires_review
 - confidence (0.0-1.0)
 

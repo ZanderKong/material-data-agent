@@ -1,41 +1,38 @@
 profiles:
   fast:
     role: fast
-    provider: openai_compatible
-    base_url_env: FAST_MODEL_BASE_URL
-    api_key_env: FAST_MODEL_API_KEY
-    model_env: FAST_MODEL_NAME
+    provider: deepseek
+    base_url_env: DEEPSEEK_TEXT_BASE_URL
+    api_key_env: DEEPSEEK_TEXT_API_KEY
+    model_env: DEEPSEEK_TEXT_MODEL
+    endpoint_path: /chat/completions
+    input_modalities: [text]
+    json_mode: required
+    thinking_mode: disabled
+    max_output_tokens: 2048
     enabled: true
     priority: 10
-    fallback: ["local_stub"]
-    timeout_seconds: 45
-    cost_tier: low
-    supports_vision: false
-    supports_json: true
-
-  best:
-    role: best
-    provider: openai_compatible
-    base_url_env: BEST_MODEL_BASE_URL
-    api_key_env: BEST_MODEL_API_KEY
-    model_env: BEST_MODEL_NAME
-    enabled: true
-    priority: 10
-    fallback: ["fast", "local_stub"]
-    timeout_seconds: 90
-    cost_tier: high
+    fallback: [local_stub]
+    timeout_seconds: 60
+    cost_tier: medium
     supports_vision: false
     supports_json: true
 
   vision:
     role: vision
-    provider: openai_compatible_vision
-    base_url_env: VISION_MODEL_BASE_URL
-    api_key_env: VISION_MODEL_API_KEY
-    model_env: VISION_MODEL_NAME
+    provider: xiaomi_mimo
+    base_url_env: MIMO_VISION_BASE_URL
+    api_key_env: MIMO_VISION_API_KEY
+    model_env: MIMO_VISION_MODEL
+    endpoint_path: /chat/completions
+    input_modalities: [text, image]
+    json_mode: required
+    image_detail: high
+    thinking_mode: disabled
+    max_output_tokens: 256
     enabled: true
     priority: 10
-    fallback: ["local_stub"]
+    fallback: [local_stub]
     timeout_seconds: 90
     cost_tier: medium
     supports_vision: true
@@ -43,14 +40,20 @@ profiles:
 
   ocr:
     role: ocr
-    provider: openai_compatible_vision
-    base_url_env: OCR_MODEL_BASE_URL
-    api_key_env: OCR_MODEL_API_KEY
-    model_env: OCR_MODEL_NAME
+    provider: siliconflow
+    base_url_env: SILICONFLOW_OCR_BASE_URL
+    api_key_env: SILICONFLOW_OCR_API_KEY
+    model_env: SILICONFLOW_OCR_MODEL
+    endpoint_path: /chat/completions
+    input_modalities: [text, image]
+    json_mode: disabled
+    image_detail: high
+    thinking_mode: provider_default
+    max_output_tokens: 256
     enabled: true
     priority: 10
-    fallback: ["local_ocr_stub", "local_stub"]
-    timeout_seconds: 60
+    fallback: [local_ocr_stub, local_stub]
+    timeout_seconds: 90
     cost_tier: medium
     supports_vision: true
-    supports_json: true
+    supports_json: false

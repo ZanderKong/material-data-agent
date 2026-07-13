@@ -45,6 +45,38 @@ def _make_ctx() -> TaskContext:
     )
 
 
+def _observation_output(**overrides):
+    value = {
+        "factual_observations": ["test"],
+        "trend_statements": [],
+        "interpretation_candidates": [],
+        "operator_notes": [],
+        "sample_ids": [],
+        "time_expressions": [],
+        "phenomenon_types": [],
+        "uncertainties": [],
+        "requires_review": False,
+        "confidence": 0.9,
+    }
+    value.update(overrides)
+    return value
+
+
+def _surface_output(**overrides):
+    value = {
+        "image_kind": "surface_photo",
+        "detected_objects": ["particle"],
+        "visible_features": ["uniform texture"],
+        "scale_bar_text": "",
+        "annotation_text": [],
+        "uncertainties": [],
+        "requires_review": False,
+        "confidence": 0.8,
+    }
+    value.update(overrides)
+    return value
+
+
 class TestProviderMockText:
     def test_success_with_valid_json(self):
         profile = _make_profile("fast")
@@ -54,7 +86,7 @@ class TestProviderMockText:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {
-            "choices": [{"message": {"content": '{"factual_observations": ["test"], "confidence": 0.9}'}}],
+            "choices": [{"message": {"content": json.dumps(_observation_output())}}],
             "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
         }
 
@@ -62,7 +94,8 @@ class TestProviderMockText:
             result = call_openai_compatible(profile, ctx, env)
 
         assert result.success
-        assert result.output_json == {"factual_observations": ["test"], "confidence": 0.9}
+        assert result.output_json["factual_observations"] == ["test"]
+        assert result.output_json["confidence"] == 0.9
         assert result.model == "test-model-v1"
         assert result.token_usage["total_tokens"] == 15
 
@@ -81,7 +114,7 @@ class TestProviderMockText:
             result = call_openai_compatible(profile, ctx, env)
 
         assert not result.success
-        assert "Invalid JSON" in result.error
+        assert "invalid_json_content" in result.error
 
     def test_http_error(self):
         profile = _make_profile("fast")
@@ -183,7 +216,7 @@ class TestProviderMockVision:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {
-            "choices": [{"message": {"content": '{"detected_objects": ["particle"], "confidence": 0.8}'}}],
+            "choices": [{"message": {"content": json.dumps(_surface_output())}}],
         }
 
         with patch("data_agent.model_adapters.openai_compatible.requests.post", return_value=mock_resp):
@@ -211,7 +244,9 @@ class TestProviderMockVision:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {
-            "choices": [{"message": {"content": '{"detected_objects": [], "final_conclusion": "bad"}'}}],
+            "choices": [{"message": {"content": json.dumps(_surface_output(
+                detected_objects=[], final_conclusion="bad"
+            ))}}],
         }
 
         with patch("data_agent.model_adapters.openai_compatible.requests.post", return_value=mock_resp):
@@ -220,6 +255,29 @@ class TestProviderMockVision:
         os.unlink(img_path)
         assert "final_conclusion" not in result.output_json
         assert "model_output_excluded_from_conclusion" in result.warnings
+
+    def test_siliconflow_ocr_plaintext_is_conservatively_normalized(self):
+        profile = ModelProfile(
+            name="ocr", role="ocr", provider="siliconflow", supports_vision=True,
+            supports_json=False, input_modalities=["text", "image"], json_mode="disabled",
+        )
+        ctx = TaskContext(task_id="task_0001", data_type="chart_image_input", model_mode="cloud", has_image=True)
+        env = _make_env()
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            f.write(b"fake png content")
+            image_path = f.name
+        mock_resp = MagicMock(status_code=200)
+        mock_resp.json.return_value = {
+            "choices": [{"message": {"content": "1. Wavelength 550 nm\n2. Wavelength 550 nm"}, "finish_reason": "length"}],
+        }
+        with patch("data_agent.model_adapters.openai_compatible.requests.post", return_value=mock_resp):
+            result = call_openai_compatible(profile, ctx, env, image_path=image_path)
+        os.unlink(image_path)
+        assert result.success
+        assert result.output_json["text_blocks"] == ["Wavelength 550 nm"]
+        assert result.output_json["detected_units"] == ["nm"]
+        assert result.requires_review
+        assert "siliconflow_ocr_plaintext_normalized" in result.warnings
 
 
 class TestStubProviders:
