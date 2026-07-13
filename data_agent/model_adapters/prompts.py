@@ -33,22 +33,10 @@ CHART_IMAGE_VISION_SYSTEM = SYSTEM_BOUNDARY + (
     " Describe visible chart structure: chart type, axes, curves, peaks, labels, legends."
 )
 
-CHART_IMAGE_VISION_PROMPT = """Analyze this chart image and extract:
-- image_kind (e.g. "line_chart", "bar_chart")
-- chart_type
-- title
-- x_axis_label
-- y_axis_label
-- detected_units
-- legend_text
-- visible_series_count
-- visible_peak_candidates (list of approximate x,y positions of visible peaks)
-- text_blocks
-- uncertainties (list of any ambiguous features)
-- requires_review
-- confidence (0.0-1.0)
-
-Output JSON only."""
+CHART_IMAGE_VISION_PROMPT = """Return exactly one compact JSON object, then stop. No prose or Markdown.
+Use this complete schema; use empty strings/lists and requires_review=true for anything not clearly visible:
+{"image_kind":"","chart_type":"","x_axis_label":"","y_axis_label":"","detected_units":[],"legend_text":[],"visible_series_count":0,"visible_peak_candidates":[],"text_blocks":[],"uncertainties":[],"requires_review":true,"confidence":0.0}
+Only describe visible chart structure. Peaks are approximate visual candidates, never source data."""
 
 VISUAL_IMAGE_VISION_SYSTEM = SYSTEM_BOUNDARY + (
     " Describe visible content of surface/microscope images: objects, features, annotations."

@@ -67,16 +67,18 @@ def build_chat_request(
     if image_path:
         if "image" not in modalities or not ctx.has_image:
             raise ValueError(f"Profile '{profile.name}' does not accept image input")
+        image_url: dict[str, str] = {"url": _encode_image(image_path)}
+        # Ark accepts OpenAI-style image_url payloads but its endpoint can stall
+        # on the optional detail extension for otherwise valid chart images.
+        if profile.provider not in {"volcengine_ark", "xiaomi_mimo"}:
+            image_url["detail"] = profile.image_detail
         messages.append({
             "role": "user",
             "content": [
                 {"type": "text", "text": user_prompt},
                 {
                     "type": "image_url",
-                    "image_url": {
-                        "url": _encode_image(image_path),
-                        "detail": profile.image_detail,
-                    },
+                    "image_url": image_url,
                 },
             ],
         })
@@ -91,8 +93,11 @@ def build_chat_request(
         "model": model_name,
         "messages": messages,
         "temperature": 0.0,
-        "max_tokens": profile.max_output_tokens,
     }
+    if profile.provider == "xiaomi_mimo":
+        payload["max_completion_tokens"] = profile.max_output_tokens
+    else:
+        payload["max_tokens"] = profile.max_output_tokens
     if profile.effective_json_mode() in {"required", "preferred"}:
         payload["response_format"] = {"type": "json_object"}
     if profile.thinking_mode != "provider_default":
@@ -177,6 +182,52 @@ def _parse_response(raw: Any) -> tuple[dict[str, Any], str, list[str], bool]:
     return parsed, content, warnings, requires_review
 
 
+def _parse_siliconflow_ocr_plaintext(raw: Any) -> tuple[dict[str, Any], str, list[str], bool]:
+    """Conservatively normalize SiliconFlow OCR's documented plain-text output.
+
+    PaddleOCR-VL may return recognized text instead of the JSON requested by the
+    generic extraction contract.  This preserves only visible text and marks the
+    result for review; it does not infer missing layout, values, or units.
+    """
+    if not isinstance(raw, dict):
+        raise ValueError("response_body_not_object")
+    choices = raw.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        raise ValueError("empty_choices")
+    message = choices[0].get("message")
+    if not isinstance(message, dict):
+        raise ValueError("missing_message")
+    content = _content_to_text(message.get("content"))
+    if not content.strip():
+        raise ValueError("empty_content")
+
+    blocks: list[str] = []
+    seen: set[str] = set()
+    for line in content.splitlines():
+        normalized = re.sub(r"^\s*\d+[.)]\s*", "", line).strip()
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            blocks.append(normalized)
+    if not blocks:
+        raise ValueError("empty_content")
+
+    joined = "\n".join(blocks)
+    units = re.findall(r"(?<![\w.])(?:nm|μm|um|mm|cm|mV|V|mA|A|Pa|kPa|MPa|GPa|K|°C|a\.u\.)(?!\w)", joined, re.IGNORECASE)
+    axis_candidates = [block for block in blocks if re.search(r"\b(?:axis|wavelength|time|signal|intensity|voltage|temperature)\b", block, re.IGNORECASE)]
+    warnings = ["siliconflow_ocr_plaintext_normalized"]
+    if choices[0].get("finish_reason") == "length":
+        warnings.append("model_output_truncated")
+    return ({
+        "text_blocks": blocks,
+        "detected_units": list(dict.fromkeys(units)),
+        "axis_candidates": axis_candidates,
+        "unreadable_regions": ["Layout and omitted text require manual confirmation."],
+        "uncertainties": ["Provider returned plain OCR text without structured layout."],
+        "requires_review": True,
+        "confidence": 0.5,
+    }, content, warnings, True)
+
+
 def call_openai_compatible(
     profile: ModelProfile,
     ctx: TaskContext,
@@ -215,7 +266,11 @@ def call_openai_compatible(
     except (OSError, ValueError) as exc:
         return failure(f"Invalid model input: {exc}")
 
-    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+    headers = {"Content-Type": "application/json"}
+    if profile.provider == "xiaomi_mimo":
+        headers["api-key"] = api_key
+    else:
+        headers["Authorization"] = f"Bearer {api_key}"
     try:
         resp = requests.post(endpoint, json=payload, headers=headers, timeout=profile.timeout_seconds)
         latency_ms = int((time.monotonic() - start) * 1000)
@@ -230,9 +285,17 @@ def call_openai_compatible(
         try:
             parsed, content, warnings, requires_review = _parse_response(raw)
         except ValueError as exc:
-            failed = failure(f"Model response validation failed: {exc}", latency_ms=latency_ms)
-            failed.raw_response = redacted_raw
-            return failed
+            if profile.provider == "siliconflow" and profile.role == "ocr" and profile.effective_json_mode() == "disabled":
+                try:
+                    parsed, content, warnings, requires_review = _parse_siliconflow_ocr_plaintext(raw)
+                except ValueError:
+                    parsed = None
+            else:
+                parsed = None
+            if parsed is None:
+                failed = failure(f"Model response validation failed: {exc}", latency_ms=latency_ms)
+                failed.raw_response = redacted_raw
+                return failed
         try:
             output_json = validate_role_output(profile.role, ctx.data_type, parsed)
         except ValidationError as exc:

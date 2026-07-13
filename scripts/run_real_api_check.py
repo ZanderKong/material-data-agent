@@ -24,23 +24,26 @@ from data_agent.db import init_db
 from data_agent.export import export_task
 from data_agent.ingest import ingest_inbox
 from data_agent.model_adapters.redaction import redact_string
-from data_agent.process import process_single_task
+import data_agent.process as process_module
 from data_agent.validation import validate_task
 
 
-SCENARIOS = ("deepseek-text", "volcengine-vision", "siliconflow-ocr", "auto-fallback")
+SCENARIOS = ("deepseek-text", "mimo-vision", "siliconflow-ocr", "auto-fallback")
 CONFIG = {
     "deepseek-text": {
         "role": "fast", "provider": "deepseek", "prefix": "DEEPSEEK_TEXT",
         "modalities": ["text"], "json_mode": "required", "thinking_mode": "disabled",
+        "max_output_tokens": 2048,
     },
-    "volcengine-vision": {
-        "role": "vision", "provider": "volcengine_ark", "prefix": "VOLCENGINE_VISION",
-        "modalities": ["text", "image"], "json_mode": "disabled", "thinking_mode": "provider_default",
+    "mimo-vision": {
+        "role": "vision", "provider": "xiaomi_mimo", "prefix": "MIMO_VISION",
+        "modalities": ["text", "image"], "json_mode": "required", "thinking_mode": "disabled",
+        "max_output_tokens": 512,
     },
     "siliconflow-ocr": {
         "role": "ocr", "provider": "siliconflow", "prefix": "SILICONFLOW_OCR",
         "modalities": ["text", "image"], "json_mode": "disabled", "thinking_mode": "provider_default",
+        "max_output_tokens": 256,
     },
 }
 
@@ -75,7 +78,7 @@ def _write_profile(path: Path, spec: dict[str, object], prefix: str) -> None:
         "model_env": f"{prefix}_MODEL", "endpoint_path": "/chat/completions",
         "input_modalities": spec["modalities"], "json_mode": spec["json_mode"],
         "image_detail": "high", "thinking_mode": spec["thinking_mode"],
-        "max_output_tokens": 2048, "enabled": True,
+        "max_output_tokens": int(spec["max_output_tokens"]), "enabled": True,
         "fallback": ["local_ocr_stub", "local_stub"] if role == "ocr" else ["local_stub"],
         "timeout_seconds": 90, "supports_vision": "image" in spec["modalities"],
         "supports_json": spec["json_mode"] != "disabled",
@@ -89,7 +92,7 @@ def _make_input(inbox: Path, scenario: str) -> None:
             "2026-01-01 10:00，样品 SYN-01 表面可见轻微浑浊。可能与温度变化有关。操作员备注：仅为合成测试。",
             encoding="utf-8",
         )
-    elif scenario == "volcengine-vision":
+    elif scenario == "mimo-vision":
         x = [1, 2, 3, 4, 5]
         fig, ax = plt.subplots(figsize=(6, 4))
         ax.plot(x, [1, 3, 2, 4, 3], label="Synthetic A")
@@ -138,7 +141,7 @@ def _run_one(scenario: str) -> int:
             print(f"scenario={scenario} status=SKIPPED reason=missing_environment workspace={workspace}")
             return 2
         requested = values[f"{prefix}_MODEL"]
-        if scenario in {"deepseek-text", "siliconflow-ocr"}:
+        if scenario in {"deepseek-text", "mimo-vision", "siliconflow-ocr"}:
             available = _preflight_models(values, requested)
             print(f"scenario={scenario} provider={spec['provider']} requested_model={'available' if available else 'unavailable'}")
             if not available:
@@ -157,13 +160,21 @@ def _run_one(scenario: str) -> int:
         original_post = adapter.requests.post
         adapter.requests.post = lambda *args, **kwargs: SimpleNamespace(status_code=429, text="synthetic rate limit")
         try:
-            process_single_task(workspace, task_id, "auto")
+            process_module.process_single_task(workspace, task_id, "auto")
         finally:
             adapter.requests.post = original_post
         provider = "local_stub"
         role = "fast"
     else:
-        process_single_task(workspace, task_id, "cloud")
+        # A provider smoke validates one role only.  Chart inputs normally route
+        # to both OCR and vision, which would otherwise turn an intentionally
+        # single-provider profile into a false validation failure.
+        original_router = process_module.route_model_calls
+        process_module.route_model_calls = lambda _ctx: [str(spec["role"])]
+        try:
+            process_module.process_single_task(workspace, task_id, "cloud")
+        finally:
+            process_module.route_model_calls = original_router
         provider = str(spec["provider"])
         role = str(spec["role"])
 

@@ -20,23 +20,23 @@ profiles:
 
   vision:
     role: vision
-    provider: volcengine_ark
-    base_url_env: VOLCENGINE_VISION_BASE_URL
-    api_key_env: VOLCENGINE_VISION_API_KEY
-    model_env: VOLCENGINE_VISION_MODEL
+    provider: xiaomi_mimo
+    base_url_env: MIMO_VISION_BASE_URL
+    api_key_env: MIMO_VISION_API_KEY
+    model_env: MIMO_VISION_MODEL
     endpoint_path: /chat/completions
     input_modalities: [text, image]
-    json_mode: disabled
+    json_mode: required
     image_detail: high
-    thinking_mode: provider_default
-    max_output_tokens: 2048
+    thinking_mode: disabled
+    max_output_tokens: 256
     enabled: true
     priority: 10
     fallback: [local_stub]
     timeout_seconds: 90
     cost_tier: medium
     supports_vision: true
-    supports_json: false
+    supports_json: true
 
   ocr:
     role: ocr
@@ -49,7 +49,7 @@ profiles:
     json_mode: disabled
     image_detail: high
     thinking_mode: provider_default
-    max_output_tokens: 2048
+    max_output_tokens: 256
     enabled: true
     priority: 10
     fallback: [local_ocr_stub, local_stub]

@@ -13,7 +13,7 @@ def _get_known_secret_values() -> set[str]:
     for env_var in (
         "BEST_MODEL_API_KEY", "FAST_MODEL_API_KEY",
         "VISION_MODEL_API_KEY", "OCR_MODEL_API_KEY",
-        "DEEPSEEK_TEXT_API_KEY", "VOLCENGINE_VISION_API_KEY",
+        "DEEPSEEK_TEXT_API_KEY", "MIMO_VISION_API_KEY",
         "SILICONFLOW_OCR_API_KEY",
     ):
         val = os.environ.get(env_var, "")

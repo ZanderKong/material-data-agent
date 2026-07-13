@@ -72,11 +72,11 @@ def test_deepseek_payload_contains_real_text_and_json_mode():
     assert "S-01 became cloudy" in payload["messages"][1]["content"]
 
 
-@pytest.mark.parametrize("provider_name,model", [
-    ("volcengine_ark", "ep-test"),
-    ("siliconflow", "PaddlePaddle/PaddleOCR-VL-1.5"),
+@pytest.mark.parametrize("provider_name,model,expect_detail", [
+    ("xiaomi_mimo", "mimo-v2.5", False),
+    ("siliconflow", "PaddlePaddle/PaddleOCR-VL-1.5", True),
 ])
-def test_multimodal_provider_payload(provider_name, model, tmp_path):
+def test_multimodal_provider_payload(provider_name, model, expect_detail, tmp_path):
     image = tmp_path / "chart.png"
     image.write_bytes(b"valid-test-bytes")
     p = profile("ocr", provider_name, image=True, json_mode="disabled")
@@ -88,7 +88,13 @@ def test_multimodal_provider_payload(provider_name, model, tmp_path):
     parts = payload["messages"][1]["content"]
     image_part = next(part for part in parts if part["type"] == "image_url")
     assert image_part["image_url"]["url"].startswith("data:image/png;base64,")
-    assert image_part["image_url"]["detail"] == "high"
+    if expect_detail:
+        assert image_part["image_url"]["detail"] == "high"
+    else:
+        assert "detail" not in image_part["image_url"]
+    if provider_name == "xiaomi_mimo":
+        assert payload["max_completion_tokens"] == 2048
+        assert "max_tokens" not in payload
 
 
 @pytest.mark.parametrize("wrapped", [

@@ -13,7 +13,7 @@ PYTHON = Path(sys.executable)
 
 def _clean_provider_env() -> dict[str, str]:
     env = os.environ.copy()
-    for prefix in ("DEEPSEEK_TEXT", "VOLCENGINE_VISION", "SILICONFLOW_OCR"):
+    for prefix in ("DEEPSEEK_TEXT", "MIMO_VISION", "SILICONFLOW_OCR"):
         for suffix in ("BASE_URL", "API_KEY", "MODEL"):
             env.pop(f"{prefix}_{suffix}", None)
     return env

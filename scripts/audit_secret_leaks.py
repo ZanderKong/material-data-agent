@@ -12,7 +12,7 @@ from pathlib import Path
 
 SECRET_NAMES = (
     "DEEPSEEK_TEXT_API_KEY",
-    "VOLCENGINE_VISION_API_KEY",
+    "MIMO_VISION_API_KEY",
     "SILICONFLOW_OCR_API_KEY",
 )
 

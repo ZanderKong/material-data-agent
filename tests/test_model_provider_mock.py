@@ -256,6 +256,29 @@ class TestProviderMockVision:
         assert "final_conclusion" not in result.output_json
         assert "model_output_excluded_from_conclusion" in result.warnings
 
+    def test_siliconflow_ocr_plaintext_is_conservatively_normalized(self):
+        profile = ModelProfile(
+            name="ocr", role="ocr", provider="siliconflow", supports_vision=True,
+            supports_json=False, input_modalities=["text", "image"], json_mode="disabled",
+        )
+        ctx = TaskContext(task_id="task_0001", data_type="chart_image_input", model_mode="cloud", has_image=True)
+        env = _make_env()
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            f.write(b"fake png content")
+            image_path = f.name
+        mock_resp = MagicMock(status_code=200)
+        mock_resp.json.return_value = {
+            "choices": [{"message": {"content": "1. Wavelength 550 nm\n2. Wavelength 550 nm"}, "finish_reason": "length"}],
+        }
+        with patch("data_agent.model_adapters.openai_compatible.requests.post", return_value=mock_resp):
+            result = call_openai_compatible(profile, ctx, env, image_path=image_path)
+        os.unlink(image_path)
+        assert result.success
+        assert result.output_json["text_blocks"] == ["Wavelength 550 nm"]
+        assert result.output_json["detected_units"] == ["nm"]
+        assert result.requires_review
+        assert "siliconflow_ocr_plaintext_normalized" in result.warnings
+
 
 class TestStubProviders:
     def test_local_stub(self):
