@@ -83,7 +83,7 @@ task_XXXX/
 当前 provider profile 模板对应：
 
 - DeepSeek `deepseek-v4-pro`：观察文本结构化提取
-- 火山引擎方舟视觉 endpoint：图表和表面图像观察
+- Xiaomi MiMo `mimo-v2.5`：图表和表面图像观察
 - SiliconFlow `PaddlePaddle/PaddleOCR-VL-1.5`：图片文字提取
 
 真实 provider 验证状态以 [CURRENT_RELEASE_STATUS.md](CURRENT_RELEASE_STATUS.md) 和 [REAL_API_CHECK.md](REAL_API_CHECK.md) 为准。没有真实调用证据时统一标记为 `NOT RUN`。
@@ -188,7 +188,7 @@ set +a
 
 ```bash
 .venv/bin/python scripts/run_real_api_check.py --scenario deepseek-text
-.venv/bin/python scripts/run_real_api_check.py --scenario volcengine-vision
+.venv/bin/python scripts/run_real_api_check.py --scenario mimo-vision
 .venv/bin/python scripts/run_real_api_check.py --scenario siliconflow-ocr
 .venv/bin/python scripts/run_real_api_check.py --scenario auto-fallback
 ```
@@ -205,7 +205,7 @@ env -u DATA_AGENT_DEMO_INBOX .venv/bin/python -m pytest -q
 git diff --check
 ```
 
-当前离线基线：`262 passed, 52 skipped`。52 个 skip 为未配置 `DATA_AGENT_DEMO_INBOX` 时的 demo 集成测试，不代表真实 demo 流程已经在当前环境执行。
+当前离线基线：`263 passed, 52 skipped`。52 个 skip 为未配置 `DATA_AGENT_DEMO_INBOX` 时的 demo 集成测试，不代表真实 demo 流程已经在当前环境执行。
 
 真实调用后，对仓库、workspace、SQLite 和 ZIP 执行精确密钥扫描：
 

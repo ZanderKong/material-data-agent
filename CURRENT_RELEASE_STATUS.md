@@ -1,42 +1,36 @@
 # Current Release Status
 
-**Release judgment: PARTIALLY READY**
+**Release judgment: READY FOR PORTFOLIO README REWRITE**
 
 ## Verified baseline
 
 - Date: 2026-07-13
-- Base commit: `135c98c`
 - Branch: `codex/real-model-release-gate`
+- Provider implementation commit: `4f00ac5`
 - Python: 3.11.15
-- Default offline tests: `262 passed, 52 skipped`
-- Demo tests: skipped because `DATA_AGENT_DEMO_INBOX` is not configured
+- Default offline tests: `263 passed, 52 skipped`
+- Demo tests: not run because `DATA_AGENT_DEMO_INBOX` is not configured
 - Compile check: PASS
-- Deterministic auto fallback: PASS
-- Fallback package validation/export: WARN/PASS
+- `git diff --check`: PASS
+- Exact-value key safety audit: PASS for the repository and all successful synthetic evidence packages
 
 ## Provider status
 
-| Provider | Role | Model | Offline contract | Real API |
+| Provider | Role | Model | Real API status | Evidence status |
 |---|---|---|---|---|
-| DeepSeek | observation text | `deepseek-v4-pro` | PASS | NOT RUN — rotated credentials missing |
-| Volcengine Ark | chart/surface vision | local endpoint ID | PASS | NOT RUN — rotated credentials missing |
-| SiliconFlow | OCR | `PaddlePaddle/PaddleOCR-VL-1.5` | PASS | NOT RUN — rotated credentials missing |
+| DeepSeek | observation text | `deepseek-v4-pro` | PASS | real run, validation WARN, export PASS |
+| Xiaomi MiMo | chart/surface vision | `mimo-v2.5` | PASS | `/models` preflight, real run, validation WARN, export PASS |
+| SiliconFlow | OCR | `PaddlePaddle/PaddleOCR-VL-1.5` | PASS | `/models` preflight, real run, validation WARN, export PASS |
+| Deterministic fallback | cloud failure → local result | synthetic | PASS | failed cloud attempt and independent fallback run persisted |
 
 ## Mode and security status
 
-- `local`: PASS; zero network requests.
-- `cloud`: offline request, response, schema, error, redaction, and persistence tests PASS.
-- `auto`: cloud failure and fallback are separate auditable results; synthetic smoke PASS.
+- `local`: offline tests confirm zero network calls.
+- `cloud`: all three active providers are verified with synthetic real calls.
+- `auto`: deterministic HTTP 429 failure is retained separately from the selected local fallback.
+- SiliconFlow plain OCR responses are normalized conservatively into the OCR schema and always marked for review; no missing layout or units are invented.
 - `.env` and real `model_profiles.yaml` remain ignored and untracked.
-- Exact-value scanner is implemented and tested without printing secret values.
-- Real-key scan is NOT RUN because rotated keys are not configured.
+- Secret scans did not find exact configured key values in tracked files, evidence workspaces, SQLite, reports, or exported ZIP packages.
 
-## Remaining release gates
-
-1. Configure newly rotated provider credentials locally.
-2. Run all three real-provider smoke scenarios.
-3. Validate and export each real-provider package.
-4. Run exact-value audit against each workspace and ZIP.
-5. Re-run the full suite and bind documentation to the final commit.
-
-The project is not yet `READY FOR PORTFOLIO README REWRITE`.
+The historical Volcengine Ark timeout is not part of the active provider configuration. See
+[REAL_API_CHECK.md](REAL_API_CHECK.md) for the detailed, non-sensitive evidence record.
